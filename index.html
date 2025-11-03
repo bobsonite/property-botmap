@@ -145,47 +145,54 @@
 
     // --- Supabase fetch by property names -----------------------------------
     async function fetchPropertiesByNames(names) {
-      // We’ll try exact match first, then fall back to ilike for each
-      // Adjust table/field names if yours differ (looks like `properties` + `property` in your screenshots)
-      const results = [];
+    const results = [];
 
-      // One batched “in” if you want exact matches:
-      const { data: exact, error: e1 } = await supabase
+    // 1) Exact matches in one go (fast path)
+    const { data: exact, error: e1 } = await supabase
         .from('properties')
-        .select('propID, property, city, adress, link, lat, lon') // lat/lon only if they exist
+        .select('propID, property, city, adress, link')  // only existing columns
         .in('property', names);
 
-      if (!e1 && Array.isArray(exact)) {
+    if (e1) {
+        console.error('[supabase] exact .in() error:', e1);
+    } else if (Array.isArray(exact)) {
         results.push(...exact);
-      }
+    }
 
-      // Fill any missing ones with ilike lookups (looser match)
-      const missing = names.filter(n => !results.some(r => (r.property || '').toLowerCase() === n.toLowerCase()));
-      for (const n of missing) {
+    // 2) Fill any missing with ilike (looser match, one-by-one)
+    const missing = names.filter(
+        n => !results.some(r => (r.property || '').toLowerCase() === n.toLowerCase())
+    );
+
+    for (const n of missing) {
         const { data, error } = await supabase
-          .from('properties')
-          .select('propID, property, city, adress, link, lat, lon')
-          .ilike('property', n);
-        if (!error && Array.isArray(data)) {
-          // take first best match
-          if (data[0]) results.push(data[0]);
-        }
-      }
+        .from('properties')
+        .select('propID, property, city, adress, link')
+        .ilike('property', `%${n}%`); // pattern match
 
-      // Ensure we have coords; geocode if not
-      const enriched = [];
-      for (const row of results) {
-        let lat = row.lat, lon = row.lon;
+        if (error) {
+        console.error(`[supabase] ilike error for "${n}":`, error);
+        continue;
+        }
+        if (Array.isArray(data) && data[0]) {
+        results.push(data[0]); // take the first best match
+        }
+    }
+
+    // 3) Ensure lat/lon exist (geocode from address+city if missing)
+    const enriched = [];
+    for (const row of results) {
+        let { lat, lon } = row; // will be undefined (table doesn’t have them)
         if (lat == null || lon == null) {
-          const q = row.adress || `${row.property || ''}, ${row.city || ''}, UK`;
-          const geo = await geocodeAddress(q);
-          if (geo) { lat = geo.lat; lon = geo.lon; }
+        const q = row.adress || `${row.property || ''}, ${row.city || ''}, UK`;
+        const geo = await geocodeAddress(q);
+        if (geo) { lat = geo.lat; lon = geo.lon; }
         }
         if (lat != null && lon != null) {
-          enriched.push({ ...row, lat, lon });
+        enriched.push({ ...row, lat, lon });
         }
-      }
-      return enriched;
+    }
+    return enriched;
     }
 
     // --- Ably message handling ----------------------------------------------
