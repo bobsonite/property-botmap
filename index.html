@@ -75,6 +75,18 @@
     const ably = new Ably.Realtime({ key: ABLY_CLIENT_KEY, clientId: sessionId });
     const channel = ably.channels.get(`filters:${sessionId}`);
 
+    // Make Ably + a tiny publisher available in DevTools
+    window.ably = ably;
+    window._debugPublish = function (propertyNames) {
+    try {
+        const sid = document.getElementById('sid').textContent;
+        const ch  = ably.channels.get(`filters:${sid}`);
+        ch.publish('filter_update', { properties: propertyNames });
+        console.log('[debug] published filter_update', propertyNames);
+    } catch (e) {
+        console.error('debug publish failed:', e);
+    }
+    };
     // --- Marker management ---------------------------------------------------
     const markersById = new Map();
 
