@@ -38,10 +38,10 @@
   <script>
     /************ CONFIG — FILL THESE ************/
     const MAPBOX_TOKEN = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA';
-    const ABLY_CLIENT_KEY = 'Pc6iLw.uon00w:xfKlxamIh-D0uHTtyW5l_VOzDdk2BEFjyeHsGYcC4N0'; // <-- Ably “Subscribe only” key
-    const SUPABASE_URL = 'https://fobibwavppcxfqpshrfp.supabase.co'; // <-- from Settings → API
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';       // <-- from Settings → API
-    const BOT_URL = ''; // e.g. a Landbot public URL, leave empty for now
+    const ABLY_CLIENT_KEY = 'Pc6iLw.uon00w:xfKlxamIh-D0uHTtyW5l_VOzDdk2BEFjyeHsGYcC4N0'; // Ably “Subscribe only” key
+    const SUPABASE_URL = 'https://fobibwavppcxfqpshrfp.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';
+    const BOT_URL = ''; // optional
     /*********************************************/
 
     // Session id
@@ -52,7 +52,7 @@
     const sessionId = urlParams.get('session_id') || newId();
     document.getElementById('sid').textContent = sessionId;
 
-    // Optional: put the bot in the iframe (if you have a proper bot URL)
+    // Optional: bot iframe
     if (BOT_URL) {
       const botSrc = new URL(BOT_URL);
       botSrc.searchParams.set('session_id', sessionId);
@@ -74,28 +74,16 @@
     // Ably
     const ably = new Ably.Realtime({ key: ABLY_CLIENT_KEY, clientId: sessionId });
     const channel = ably.channels.get(`filters:${sessionId}`);
+    window.ably = ably; // handy for console tests
 
-    // Make Ably + a tiny publisher available in DevTools
-    window.ably = ably;
-    window._debugPublish = function (propertyNames) {
-    try {
-        const sid = document.getElementById('sid').textContent;
-        const ch  = ably.channels.get(`filters:${sid}`);
-        ch.publish('filter_update', { properties: propertyNames });
-        console.log('[debug] published filter_update', propertyNames);
-    } catch (e) {
-        console.error('debug publish failed:', e);
-    }
-    };
     // --- Marker management ---------------------------------------------------
     const markersById = new Map();
 
     function addOrMoveMarker(row) {
-      // We’ll prefer a stable ID if present; otherwise fall back to property name.
       const id = row.propid ?? row.propID ?? row.id ?? row.property;
+      const marker = markersById.get(id) ?? new mapboxgl.Marker({ anchor:'bottom' });
 
-      const el = markersById.get(id) ?? new mapboxgl.Marker({ anchor:'bottom' });
-      el
+      marker
         .setLngLat([row.lon, row.lat])
         .setPopup(new mapboxgl.Popup({ offset: 8 }).setHTML(`
           <div style="font-size:13px; line-height:1.3">
@@ -106,7 +94,7 @@
         `))
         .addTo(map);
 
-      markersById.set(id, el);
+      markersById.set(id, marker);
     }
 
     function clearMarkers() {
@@ -126,7 +114,7 @@
       map.fitBounds(b, { padding: pad, duration: 700 });
     }
 
-    // --- Mapbox geocoding (POC) ---------------------------------------------
+    // --- Mapbox geocoding ---------------------------------------------------
     async function geocodeAddress(q) {
       if (!q) return null;
       const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`);
@@ -145,83 +133,259 @@
 
     // --- Supabase fetch by property names -----------------------------------
     async function fetchPropertiesByNames(names) {
-    const results = [];
+      const results = [];
 
-    // 1) Exact matches in one go (fast path)
-    const { data: exact, error: e1 } = await supabase
-        .from('properties')
-        .select('propID, property, city, adress, link')  // only existing columns
-        .in('property', names);
-
-    if (e1) {
-        console.error('[supabase] exact .in() error:', e1);
-    } else if (Array.isArray(exact)) {
-        results.push(...exact);
-    }
-
-    // 2) Fill any missing with ilike (looser match, one-by-one)
-    const missing = names.filter(
-        n => !results.some(r => (r.property || '').toLowerCase() === n.toLowerCase())
-    );
-
-    for (const n of missing) {
-        const { data, error } = await supabase
+      // exact matches
+      const { data: exact, error: e1 } = await supabase
         .from('properties')
         .select('propID, property, city, adress, link')
-        .ilike('property', `%${n}%`); // pattern match
-
-        if (error) {
-        console.error(`[supabase] ilike error for "${n}":`, error);
-        continue;
-        }
-        if (Array.isArray(data) && data[0]) {
-        results.push(data[0]); // take the first best match
-        }
-    }
-
-    // 3) Ensure lat/lon exist (geocode from address+city if missing)
-    const enriched = [];
-    for (const row of results) {
-        let { lat, lon } = row; // will be undefined (table doesn’t have them)
-        if (lat == null || lon == null) {
-        const q = row.adress || `${row.property || ''}, ${row.city || ''}, UK`;
-        const geo = await geocodeAddress(q);
-        if (geo) { lat = geo.lat; lon = geo.lon; }
-        }
-        if (lat != null && lon != null) {
-        enriched.push({ ...row, lat, lon });
-        }
-    }
-    return enriched;
-    }
-
-    // --- Ably message handling ----------------------------------------------
-    channel.subscribe('filter_update', async (message) => {
-      const payload = message.data || {};
-      console.log('[Ably] filter_update', payload);
-
-      // If a viewport was provided (optional UX)
-      if (payload.viewport?.bbox && Array.isArray(payload.viewport.bbox) && payload.viewport.bbox.length === 4) {
-        const [minLon, minLat, maxLon, maxLat] = payload.viewport.bbox;
-        map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 48, duration: 800 });
-      } else if (payload.viewport?.center) {
-        map.flyTo({ center: payload.viewport.center, zoom: payload.viewport.zoom ?? 12, duration: 800 });
+        .in('property', names);
+      if (e1) {
+        console.error('[supabase] exact .in() error:', e1);
+      } else if (Array.isArray(exact)) {
+        results.push(...exact);
       }
 
-      // POC: respond to a list of property names
-      if (Array.isArray(payload.properties) && payload.properties.length) {
+      // ilike for any that didn’t match
+      const missing = names.filter(
+        n => !results.some(r => (r.property || '').toLowerCase() === n.toLowerCase())
+      );
+      for (const n of missing) {
+        const { data, error } = await supabase
+          .from('properties')
+          .select('propID, property, city, adress, link')
+          .ilike('property', `%${n}%`);
+        if (error) {
+          console.error(`[supabase] ilike error for "${n}":`, error);
+          continue;
+        }
+        if (Array.isArray(data) && data[0]) results.push(data[0]);
+      }
+
+      // enrich with lat/lon via geocoding
+      const enriched = [];
+      for (const row of results) {
+        let { lat, lon } = row;
+        if (lat == null || lon == null) {
+          const q = row.adress || `${row.property || ''}, ${row.city || ''}, UK`;
+          const geo = await geocodeAddress(q);
+          if (geo) { lat = geo.lat; lon = geo.lon; }
+        }
+        if (lat != null && lon != null) enriched.push({ ...row, lat, lon });
+      }
+      return enriched;
+    }
+
+    // ---------- small utils ----------
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    const metersBetween = (a,b) => {
+      const R=6371000, toRad = d => d*Math.PI/180;
+      const dLat = toRad(b.lat-a.lat), dLon = toRad(b.lon-a.lon);
+      const la1 = toRad(a.lat), la2 = toRad(b.lat);
+      const h = Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;
+      return 2*R*Math.asin(Math.sqrt(h));
+    };
+
+    function normalizeLatLon(row) {
+      const lat = row.lat ?? row.latitude ?? row.Lat ?? row.Latitude;
+      const lon = row.lon ?? row.lng ?? row.long ?? row.longitude ?? row.Lon ?? row.Longitude;
+      return (lat!=null && lon!=null) ? {lat:Number(lat), lon:Number(lon)} : null;
+    }
+
+    // ---------- 1) University → closest properties (university_distance_final) ----------
+    async function fetchNearestPropsByUniversity(universityName, {
+      owner = null,
+      orderBy = 'distance_walking',
+      limit = 8
+    } = {}) {
+      const cols = [
+        'UUID','University','"University Postcode"','City','Property','Owner','"Adress Prop"','"Postcode Property"',
+        'distance_walking','time_walking','distance_cycling','time_cycling','distance_transport','time_transport','propID'
+      ].join(',');
+
+      let q = supabase.from('university_distance_final').select(cols);
+      q = q.ilike('University', `%${universityName}%`);
+      if (owner) q = q.eq('Owner', owner);
+      if (orderBy) q = q.order(orderBy, { ascending: true });
+      if (limit) q = q.limit(limit);
+
+      const { data, error } = await q;
+      if (error) { console.error('[supabase] uni query error', error); return []; }
+
+      // Geocode property addresses to lat/lon
+      const out = [];
+      const cache = new Map();
+      for (const r of data) {
+        const addr = r['Adress Prop'] || `${r.Property}, ${r.City||''}, UK`;
+        if (!cache.has(addr)) cache.set(addr, await geocodeAddress(addr));
+        const geo = cache.get(addr);
+        if (!geo) continue;
+        out.push({
+          id: r.propID ?? r.UUID ?? r.Property,
+          propID: r.propID ?? null,
+          property: r.Property,
+          city: r.City,
+          link: null,
+          lat: geo.lat, lon: geo.lon,
+          owner: r.Owner,
+          university: r.University,
+          distance_walking: r.distance_walking,
+          time_walking: r.time_walking
+        });
+      }
+      return out;
+    }
+
+    // ---------- 2) Places near a coordinate (places_final) ----------
+    async function fetchPlacesNear(center, {
+      radiusMeters = 800,
+      types = [],
+      perTypeLimit = 10
+    } = {}) {
+      let { data, error } = await supabase.from('places_final').select('*').limit(2000);
+      if (error) { console.error('[supabase] places query error', error); return []; }
+
+      const typeCol = data.length ? (['type','category','kind','place_type','tag']
+        .find(k => k in data[0]) || null) : null;
+
+      if (types.length && typeCol) {
+        const want = types.map(s => String(s).toLowerCase());
+        data = data.filter(r => want.includes(String(r[typeCol]||'').toLowerCase()));
+      }
+
+      const buckets = new Map();
+      for (const r of data) {
+        const geo = normalizeLatLon(r);
+        if (!geo) continue;
+        const d = metersBetween(center, geo);
+        if (d > radiusMeters) continue;
+
+        const t = (typeCol ? String(r[typeCol]||'').toLowerCase() : 'poi');
+        if (!buckets.has(t)) buckets.set(t, []);
+        if (buckets.get(t).length >= perTypeLimit) continue;
+
+        buckets.get(t).push({ ...r, ...geo, _type: t, _distance_m: Math.round(d) });
+      }
+
+      return [...buckets.values()].flat().sort((a,b)=>a._distance_m-b._distance_m);
+    }
+
+    // ---------- 3) Route helper (Mapbox Directions) ----------
+    async function drawRoute(from, to, {
+      profile = 'walking',   // 'walking' | 'driving' | 'cycling'
+      lineId = 'route-line'
+    } = {}) {
+      if (!map.isStyleLoaded()) {
+        await new Promise(res => map.once('load', res));
+      }
+      const url = new URL(`https://api.mapbox.com/directions/v5/mapbox/${profile}/${from.lon},${from.lat};${to.lon},${to.lat}`);
+      url.searchParams.set('geometries','geojson');
+      url.searchParams.set('overview','full');
+      url.searchParams.set('access_token', MAPBOX_TOKEN);
+
+      try {
+        const r = await fetch(url);
+        const j = await r.json();
+        const route = j?.routes?.[0];
+        if (!route?.geometry) return null;
+
+        const srcId = 'route-src';
+        if (!map.getSource(srcId)) {
+          map.addSource(srcId, { type:'geojson', data: route.geometry });
+          map.addLayer({
+            id: lineId, type:'line', source: srcId,
+            paint: { 'line-width': 4, 'line-color': '#3b82f6', 'line-opacity': 0.85 }
+          });
+        } else {
+          map.getSource(srcId).setData(route.geometry);
+        }
+        return { distance_m: route.distance, duration_s: route.duration };
+      } catch (e) {
+        console.error('directions fetch failed', e);
+        return null;
+      }
+    }
+
+    // --- Ably message handling (updated) ------------------------------------
+    channel.subscribe('filter_update', async (message) => {
+      const p = message.data || {};
+      console.log('[Ably] filter_update', p);
+
+      // Optional viewport control
+      if (p.viewport?.bbox && Array.isArray(p.viewport.bbox) && p.viewport.bbox.length === 4) {
+        const [minLon, minLat, maxLon, maxLat] = p.viewport.bbox;
+        map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 48, duration: 800 });
+      } else if (p.viewport?.center) {
+        map.flyTo({ center: p.viewport.center, zoom: p.viewport.zoom ?? 12, duration: 800 });
+      }
+
+      // 1) Legacy: list of property names
+      if (Array.isArray(p.properties) && p.properties.length) {
         clearMarkers();
-        const rows = await fetchPropertiesByNames(payload.properties);
+        const rows = await fetchPropertiesByNames(p.properties);
         rows.forEach(addOrMoveMarker);
         fitToMarkers();
+        return;
       }
 
-      // (Later you can support price/beds/tags etc by fetching with filters or by id list)
+      // 2) New: closest properties to a university
+      if (p.uni) {
+        clearMarkers();
+
+        const props = await fetchNearestPropsByUniversity(p.uni, {
+          owner: p.owner ?? null,
+          orderBy: p.orderBy ?? 'distance_walking',
+          limit: p.limit ?? 8
+        });
+
+        props.forEach(addOrMoveMarker);
+        fitToMarkers();
+
+        // Optional: POIs around the nearest property
+        if (p.places && props[0]) {
+          const center = { lat: props[0].lat, lon: props[0].lon };
+          const near = await fetchPlacesNear(center, {
+            radiusMeters: p.places.radiusMeters ?? 800,
+            types: (p.places.types || []).map(s => String(s).toLowerCase()),
+            perTypeLimit: p.places.perTypeLimit ?? 10
+          });
+
+          for (const poi of near) {
+            addOrMoveMarker({
+              id: `poi:${poi.id ?? poi._type + ':' + (poi.name || poi.title || Math.random().toString(36).slice(2))}`,
+              property: poi.name || poi.title || poi._type,
+              city: `${poi._type} · ${poi._distance_m} m`,
+              link: poi.url || poi.website || null,
+              lat: poi.lat, lon: poi.lon
+            });
+          }
+          fitToMarkers();
+        }
+
+        // Optional: route from first property to university center
+        if (p.route && props[0]) {
+          const uniGeo = await geocodeAddress(`${p.uni}, UK`);
+          if (uniGeo) {
+            await drawRoute(
+              { lat: props[0].lat, lon: props[0].lon },
+              uniGeo,
+              { profile: p.route.profile ?? 'walking' }
+            );
+          }
+        }
+      }
     });
 
-    // DevTools helper (so you can quickly publish from console on the page)
-    window._debugPublish = (props) => {
-      channel.publish('filter_update', { properties: props });
+    // DevTools helpers (publish test messages easily)
+    window._debugPublish = (payloadOrNames) => {
+      const sid = document.getElementById('sid').textContent;
+      const ch  = ably.channels.get(`filters:${sid}`);
+      if (Array.isArray(payloadOrNames)) {
+        ch.publish('filter_update', { properties: payloadOrNames });
+      } else {
+        ch.publish('filter_update', payloadOrNames);
+      }
     };
   </script>
 </body>
