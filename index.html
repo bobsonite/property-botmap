@@ -205,12 +205,21 @@
     }
     function pick(row, names, fallback=null){ for (const k of names){ if (row[k]!==undefined && row[k]!==null) return row[k]; } return fallback; }
 
-    // ---------------- University → closest properties ----------------
+    // ---------------- University → closest properties (with smart quote matching) ----------------
+    function normText(s){
+      return String(s ?? '')
+        .toLowerCase()
+        .replace(/[\u2018\u2019\u2032]/g, "'") // curly/prime → straight apostrophe
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
     async function fetchNearestPropsByUniversity(universityName, { owner=null, orderBy='distance_walking', limit=8 } = {}){
       const { data, error } = await supabase.from('university_distance_final').select('*').limit(2000);
       if (error || !Array.isArray(data)) { console.error('[supabase] uni query error', error); return []; }
 
-      const needle = String(universityName||'').toLowerCase();
+      const needle = normText(universityName);
+
       let rows = data.map(r => {
         const uni   = pick(r, ['University','university','uni_name','uni']);
         const city  = pick(r, ['City','city']);
@@ -229,8 +238,9 @@
         };
       });
 
-      rows = rows.filter(r => r.university && String(r.university).toLowerCase().includes(needle));
-      if (owner) rows = rows.filter(r => String(r.owner||'').toLowerCase() === String(owner).toLowerCase());
+      // smart comparison: normalize both sides
+      rows = rows.filter(r => r.university && normText(r.university).includes(needle));
+      if (owner) rows = rows.filter(r => normText(r.owner||'') === normText(owner));
 
       const key = orderBy || 'distance_walking';
       rows.sort((a,b)=> (Number(a[key] ?? 1e15) - Number(b[key] ?? 1e15)));
