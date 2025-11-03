@@ -12,6 +12,8 @@
     #map { flex: 1; }
     .topbar { position:absolute; right:12px; top:12px; background:#fff; padding:8px 10px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,.08); z-index:2; font-size:12px;}
     .pill { display:inline-block; background:#f2f2f2; padding:2px 8px; border-radius:999px; margin-left:6px; }
+
+    /* cute emoji pins */
     .pin { width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,.18); border:1px solid #ddd; }
     .pin--prop { border-color:#2563eb; }
     .pin--uni  { border-color:#16a34a; }
@@ -35,7 +37,7 @@
   <script>
     /************ CONFIG ************/
     const MAPBOX_TOKEN      = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA';
-    const ABLY_CLIENT_KEY   = 'Pc6iLw.uon00w:xfKlxamIh-D0uHTtyW5l_VOzDdk2BEFjyeHsGYcC4N0';   // subscribe/publish ok
+    const ABLY_CLIENT_KEY   = 'Pc6iLw.uon00w:xfKlxamIh-D0uHTtyW5l_VOzDdk2BEFjyeHsGYcC4N0';
     const SUPABASE_URL      = 'https://fobibwavppcxfqpshrfp.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';
     const BOT_URL = '';
@@ -82,9 +84,15 @@
 
     function makeMarkerEl(kind, type) {
       const el = document.createElement('div');
-      el.className = `pin ${iconFor({kind, type}).cls}`;
-      el.textContent = iconFor({kind, type}).emoji;
+      const meta = iconFor({kind, type});
+      el.className = `pin ${meta.cls}`;
+      el.textContent = meta.emoji;
       return el;
+    }
+
+    function fmtMeters(m){
+      if (m == null) return '';
+      return m >= 1000 ? (m/1000).toFixed(1) + ' km' : m + ' m';
     }
 
     function addOrMoveMarker(row) {
@@ -94,10 +102,19 @@
 
       const marker = markersById.get(id) ?? new mapboxgl.Marker({ element: makeMarkerEl(kind, type), anchor:'bottom' });
 
-      const walk  = row.time_walking     ? `🚶 ${Math.round(row.time_walking/60)} min` : '';
-      const cycle = row.time_cycling     ? ` · 🚲 ${Math.round(row.time_cycling/60)} min` : '';
-      const trans = row.time_transport   ? ` · 🚗 ${Math.round(row.time_transport/60)} min` : '';
-      const dist  = row._distance_m      ? ` · ${row._distance_m} m` : '';
+      const walk  = (row.time_walking!=null || row.distance_walking!=null)
+        ? `🚶 ${row.time_walking!=null ? Math.round(row.time_walking/60)+' min' : ''}${row.distance_walking!=null ? ' · '+fmtMeters(row.distance_walking) : ''}`
+        : '';
+
+      const cycle = (row.time_cycling!=null || row.distance_cycling!=null)
+        ? ` · 🚲 ${row.time_cycling!=null ? Math.round(row.time_cycling/60)+' min' : ''}${row.distance_cycling!=null ? ' · '+fmtMeters(row.distance_cycling) : ''}`
+        : '';
+
+      const trans = (row.time_transport!=null || row.distance_transport!=null)
+        ? ` · 🚗 ${row.time_transport!=null ? Math.round(row.time_transport/60)+' min' : ''}${row.distance_transport!=null ? ' · '+fmtMeters(row.distance_transport) : ''}`
+        : '';
+
+      const dist  = row._distance_m ? ` · ${fmtMeters(row._distance_m)}` : '';
 
       marker
         .setLngLat([row.lon, row.lat])
@@ -242,31 +259,29 @@
       }
       return out;
     }
-const PLACES_TABLE = 'Places_final';
-    // ---------------- Places near a coordinate (from places_final) ----------------
+
+    const PLACES_TABLE = 'Places_final';
+
+    // ---------------- Places near a coordinate (from Places_final) ----------------
     async function fetchPlacesNear(center, { radiusMeters=800, types=[], perTypeLimit=10, propertyName=null, propID=null } = {}){
-      // If a propertyName/propID is supplied, filter in SQL so we only geocode that subset.
       let q = supabase.from(PLACES_TABLE).select('*').limit(500);
       if (propID!=null) q = q.eq('propID', String(propID));
       else if (propertyName) q = q.ilike('Property', `%${propertyName}%`);
       const { data, error } = await q;
       if (error) { console.error('[supabase] places query error', error); return []; }
 
-      // Decide the type column
       const typeCol = data.length ? (['type_single','type','category','kind','place_type','tag']
         .find(k => k in data[0]) || null) : null;
 
-      // Apply optional type filter
       let rows = data;
       if (types.length && typeCol){
         const want = types.map(s => String(s).toLowerCase());
         rows = rows.filter(r => want.includes(String(r[typeCol]||'').toLowerCase()));
       }
 
-      const buckets = new Map(); // type -> items[]
+      const buckets = new Map();
       const gcache = _geoCache;
       for (const r of rows){
-        // If table has coords use them, else geocode Address
         let geo = normalizeLatLon(r);
         if (!geo && r.Address){
           const cached = gcache.get(r.Address.toLowerCase());
@@ -296,8 +311,7 @@ const PLACES_TABLE = 'Places_final';
 
     // ---------------- Center helpers for a property ----------------
     async function centerForProperty(propertyName){
-      // Try properties table first
-      const { data, error } = await supabase.from('properties')
+      const { data } = await supabase.from('properties')
         .select('property, city, adress')
         .ilike('property', `%${propertyName}%`)
         .limit(1);
@@ -306,7 +320,12 @@ const PLACES_TABLE = 'Places_final';
       return geo; // {lat,lon} or null
     }
 
-    // ---------------- Directions helper ----------------
+    // ---------------- Route helpers ----------------
+    function removeRoute(lineId='route-line', srcId='route-src'){
+      if (map.getLayer(lineId))  map.removeLayer(lineId);
+      if (map.getSource(srcId)) map.removeSource(srcId);
+    }
+
     async function drawRoute(from, to, { profile='walking', lineId='route-line' } = {}){
       if (!map.isStyleLoaded()) await new Promise(res => map.once('load', res));
       const url = new URL(`https://api.mapbox.com/directions/v5/mapbox/${profile}/${from.lon},${from.lat};${to.lon},${to.lat}`);
@@ -330,6 +349,9 @@ const PLACES_TABLE = 'Places_final';
       const p = message.data || {};
       console.log('[Ably] filter_update', p);
 
+      // always clear any previous route unless asked to draw again
+      removeRoute();
+
       // Manual viewport (optional)
       if (p.viewport?.bbox && Array.isArray(p.viewport.bbox) && p.viewport.bbox.length === 4) {
         const [minLon, minLat, maxLon, maxLat] = p.viewport.bbox;
@@ -347,7 +369,7 @@ const PLACES_TABLE = 'Places_final';
         return;
       }
 
-      // 2) University → nearest properties (plus optional POIs & route)
+      // 2) University → nearest properties (plus optional POIs & (optional) route)
       if (p.uni) {
         clearMarkers();
 
@@ -370,27 +392,27 @@ const PLACES_TABLE = 'Places_final';
             radiusMeters: p.places.radiusMeters ?? 800,
             types: (p.places.types || []).map(s => String(s).toLowerCase()),
             perTypeLimit: p.places.perTypeLimit ?? 10,
-            propertyName: props[0].property, // also filter by that prop in places_final if present
+            propertyName: props[0].property,
             propID: props[0].propID ?? null
           });
           near.forEach(addOrMoveMarker);
           fitToMarkers();
         }
 
-        if (p.route && props[0] && uniGeo) {
+        // draw a route ONLY if explicitly requested
+        if (p.route?.draw === true && props[0] && uniGeo) {
           await drawRoute({ lat: props[0].lat, lon: props[0].lon }, uniGeo, { profile: p.route.profile ?? 'walking' });
         }
         return;
       }
 
-      // 3) NEW: property-centric POIs (p.poiForProperty)
+      // 3) Property-centric POIs (p.poiForProperty)
       if (p.poiForProperty?.name || p.poiForProperty?.propID){
         clearMarkers();
 
-        // Center on the given property (by name)
+        // Center on the given property
         let center = null;
         if (p.poiForProperty.propID){
-          // grab a name for context from places_final then center via properties table
           const { data } = await supabase.from(PLACES_TABLE).select('Property').eq('propID', String(p.poiForProperty.propID)).limit(1);
           const propName = data?.[0]?.Property;
           center = propName ? await centerForProperty(propName) : null;
