@@ -1,0 +1,6 @@
+⚠️  Rows in aux tables reference properties NOT in properties_rows.csv:
+  - amenities_exploded_rows: 1 (e.g. ['the port on the square'])
+  - services_included_exploded_rows: 1 (e.g. ['the port on the square'])
+  - room_price_processed_rows: 1 (e.g. ['the port on the square'])
+🧹 Dropped 0 properties with empty address (property-level).
+🧹 Dropped 22 room rows with empty address (room-level).

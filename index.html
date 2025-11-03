@@ -16,10 +16,10 @@
 </head>
 <body>
   <div class="wrap">
-    <!-- 1) Left: bot iframe (we'll set src in JS so we can append ?session_id=...) -->
+    <!-- Left: bot iframe (optional; leave blank now to avoid iframing this page into itself) -->
     <iframe id="botPane" title="Student Bot"></iframe>
 
-    <!-- 2) Right: Map -->
+    <!-- Right: Map -->
     <div id="map"></div>
 
     <!-- Simple HUD -->
@@ -32,30 +32,34 @@
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <!-- Ably Realtime JS (browser) -->
   <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+  <!-- Supabase JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
   <script>
-    /************ FILL THESE IN ************/
-    const MAPBOX_TOKEN = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA'; // your token
-    const ABLY_CLIENT_KEY = 'Pc6iLw.uon00w:xfKlxamIh-D0uHTtyW5l_VOzDdk2BEFjyeHsGYcC4N0'; // create a read/subscribe key in Ably → API Keys
-    const BOT_URL = 'https://YOUR-BOT-DOMAIN/chat'; // your colleague’s public bot URL
-    /****************************************/
+    /************ CONFIG — FILL THESE ************/
+    const MAPBOX_TOKEN = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA';
+    const ABLY_CLIENT_KEY = 'Pc6iLw.FGFQUw'; // <-- Ably “Subscribe only” key
+    const SUPABASE_URL = 'https://fobibwavppcxfqpshrfp.supabase.co'; // <-- from Settings → API
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';       // <-- from Settings → API
+    const BOT_URL = ''; // e.g. a Landbot public URL, leave empty for now
+    /*********************************************/
 
-    // 0) Create or read session_id (so each tab has its own channel)
+    // Session id
     function newId() {
       return (crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2);
     }
     const urlParams = new URLSearchParams(location.search);
     const sessionId = urlParams.get('session_id') || newId();
-
-    // Show it in the HUD
     document.getElementById('sid').textContent = sessionId;
 
-    // 1) Put the bot on the page, passing session_id in the iframe URL
-    const botSrc = new URL(BOT_URL);
-    botSrc.searchParams.set('session_id', sessionId);
-    document.getElementById('botPane').src = botSrc.toString();
+    // Optional: put the bot in the iframe (if you have a proper bot URL)
+    if (BOT_URL) {
+      const botSrc = new URL(BOT_URL);
+      botSrc.searchParams.set('session_id', sessionId);
+      document.getElementById('botPane').src = botSrc.toString();
+    }
 
-    // 2) Start the map
+    // Map
     mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
       container: 'map',
@@ -64,21 +68,120 @@
       zoom: 9
     });
 
-    // OPTIONAL: once you have a tileset, add your properties layer here.
-    map.on('load', () => {
-      // Example placeholder: nothing to add yet.
-      // Later you'll add a source 'props' and a layer 'properties-layer'
-    });
+    // Supabase
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // 3) Subscribe to Ably channel filters:{session_id}
+    // Ably
     const ably = new Ably.Realtime({ key: ABLY_CLIENT_KEY, clientId: sessionId });
     const channel = ably.channels.get(`filters:${sessionId}`);
 
-    channel.subscribe('filter_update', (message) => {
+    // --- Marker management ---------------------------------------------------
+    const markersById = new Map();
+
+    function addOrMoveMarker(row) {
+      // We’ll prefer a stable ID if present; otherwise fall back to property name.
+      const id = row.propid ?? row.propID ?? row.id ?? row.property;
+
+      const el = markersById.get(id) ?? new mapboxgl.Marker({ anchor:'bottom' });
+      el
+        .setLngLat([row.lon, row.lat])
+        .setPopup(new mapboxgl.Popup({ offset: 8 }).setHTML(`
+          <div style="font-size:13px; line-height:1.3">
+            <div style="font-weight:600">${row.property ?? ''}</div>
+            <div style="color:#666">${row.city ?? ''}</div>
+            ${row.link ? `<div style="margin-top:6px"><a href="${row.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
+          </div>
+        `))
+        .addTo(map);
+
+      markersById.set(id, el);
+    }
+
+    function clearMarkers() {
+      for (const m of markersById.values()) m.remove();
+      markersById.clear();
+    }
+
+    function fitToMarkers(pad=60) {
+      const coords = [...markersById.values()].map(m => m.getLngLat());
+      if (!coords.length) return;
+      if (coords.length === 1) {
+        map.flyTo({ center: coords[0], zoom: 14, duration: 600 });
+        return;
+      }
+      const b = new mapboxgl.LngLatBounds(coords[0], coords[0]);
+      coords.forEach(c => b.extend(c));
+      map.fitBounds(b, { padding: pad, duration: 700 });
+    }
+
+    // --- Mapbox geocoding (POC) ---------------------------------------------
+    async function geocodeAddress(q) {
+      if (!q) return null;
+      const url = new URL(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`);
+      url.searchParams.set('access_token', MAPBOX_TOKEN);
+      url.searchParams.set('limit', '1');
+      try {
+        const r = await fetch(url);
+        const j = await r.json();
+        const f = j.features?.[0];
+        if (f?.center?.length === 2) {
+          return { lon: f.center[0], lat: f.center[1] };
+        }
+      } catch {}
+      return null;
+    }
+
+    // --- Supabase fetch by property names -----------------------------------
+    async function fetchPropertiesByNames(names) {
+      // We’ll try exact match first, then fall back to ilike for each
+      // Adjust table/field names if yours differ (looks like `properties` + `property` in your screenshots)
+      const results = [];
+
+      // One batched “in” if you want exact matches:
+      const { data: exact, error: e1 } = await supabase
+        .from('properties')
+        .select('propID, property, city, adress, link, lat, lon') // lat/lon only if they exist
+        .in('property', names);
+
+      if (!e1 && Array.isArray(exact)) {
+        results.push(...exact);
+      }
+
+      // Fill any missing ones with ilike lookups (looser match)
+      const missing = names.filter(n => !results.some(r => (r.property || '').toLowerCase() === n.toLowerCase()));
+      for (const n of missing) {
+        const { data, error } = await supabase
+          .from('properties')
+          .select('propID, property, city, adress, link, lat, lon')
+          .ilike('property', n);
+        if (!error && Array.isArray(data)) {
+          // take first best match
+          if (data[0]) results.push(data[0]);
+        }
+      }
+
+      // Ensure we have coords; geocode if not
+      const enriched = [];
+      for (const row of results) {
+        let lat = row.lat, lon = row.lon;
+        if (lat == null || lon == null) {
+          const q = row.adress || `${row.property || ''}, ${row.city || ''}, UK`;
+          const geo = await geocodeAddress(q);
+          if (geo) { lat = geo.lat; lon = geo.lon; }
+        }
+        if (lat != null && lon != null) {
+          enriched.push({ ...row, lat, lon });
+        }
+      }
+      return enriched;
+    }
+
+    // --- Ably message handling ----------------------------------------------
+    channel.subscribe('filter_update', async (message) => {
       const payload = message.data || {};
       console.log('[Ably] filter_update', payload);
 
-      // Move/zoom the map if viewport is provided
+      // If a viewport was provided (optional UX)
       if (payload.viewport?.bbox && Array.isArray(payload.viewport.bbox) && payload.viewport.bbox.length === 4) {
         const [minLon, minLat, maxLon, maxLat] = payload.viewport.bbox;
         map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 48, duration: 800 });
@@ -86,23 +189,21 @@
         map.flyTo({ center: payload.viewport.center, zoom: payload.viewport.zoom ?? 12, duration: 800 });
       }
 
-      // Apply filters once your data layer exists
-      // if (map.getLayer('properties-layer')) {
-      //   const expr = buildMapboxExpression(payload.filters || {});
-      //   map.setFilter('properties-layer', expr);
-      // }
+      // POC: respond to a list of property names
+      if (Array.isArray(payload.properties) && payload.properties.length) {
+        clearMarkers();
+        const rows = await fetchPropertiesByNames(payload.properties);
+        rows.forEach(addOrMoveMarker);
+        fitToMarkers();
+      }
+
+      // (Later you can support price/beds/tags etc by fetching with filters or by id list)
     });
 
-    // Helper to build a Mapbox filter (uncomment when you add your layer)
-    function buildMapboxExpression(f) {
-      const clauses = [];
-      if (f.price_lte != null) clauses.push(['<=', ['get','price_pcm'], f.price_lte]);
-      if (f.beds_gte  != null) clauses.push(['>=', ['get','beds'], f.beds_gte]);
-      if (Array.isArray(f.tags_any) && f.tags_any.length)
-        clauses.push(['any', ...f.tags_any.map(tag => ['in', tag, ['get','tags']])]);
-      if (f.uni) clauses.push(['==', ['get','nearest_uni'], f.uni]);
-      return clauses.length ? ['all', ...clauses] : true;
-    }
+    // DevTools helper (so you can quickly publish from console on the page)
+    window._debugPublish = (props) => {
+      channel.publish('filter_update', { properties: props });
+    };
   </script>
 </body>
 </html>

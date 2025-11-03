@@ -1,0 +1,56 @@
+id,property,room_type,price,available
+02c62799-9bad-4da7-b40a-b6a6ab7f1d2c,800 Bristol Road,Classic Studio,289,true
+078b8ee7-df21-415e-8fc2-140ff68c0f99,The Port on The Square,Classic Studio,,false
+0a281852-3061-42d6-bf3a-1650dad68133,The Edge,Bronze Studio,,false
+0b93cebe-3f74-40bc-b11e-b72db4c954a0,The Port On The Square,Classic Studio,,false
+0e975b64-3ced-4a9d-b569-b1225f679200,The Edge,Corner Studio,180,true
+1aa5e73e-9901-4719-8137-5a76018c1f42,The Port On The Square,Premium Ensuite,265,true
+1fde1ce4-19e9-455f-8131-c42236a4e6ee,The Port on The Square,Deluxe Studio,,false
+245905a7-467a-48d6-854c-0940bce5d3ff,The Port On The Square,Accessible Ensuite,,false
+277ec069-d931-4b18-b63a-e3d77bf0b53d,The Edge,Standard Studio,,false
+288b5ca6-8664-485f-afe0-99efae911902,The Port on The Square,Premium Ensuite,265,true
+2a37466d-1043-49f3-815f-b2cee15b336a,800 Bristol Road,Premium Studio Plus,289,true
+2e5ddc7b-6abd-4e6c-8b2f-72e7b9be7440,The Edge,Gold Studio,165,true
+3124c1bd-0292-4d95-ae87-8290ffeeb72d,The Port on The Square,Standard Ensuite,,false
+3d6cd1d8-e5ab-4afe-b055-b21db0abd9ce,The Port on The Square,Premium Studio,,false
+438fec7e-98db-475b-b93f-4f131c4b81dd,Hollis Wharf,Standard Plus Studio,309,true
+4472eea3-f0bb-4a05-8296-46a3e7bedec9,800 Bristol Road,Premium Studio,,false
+4719b787-70cc-41c8-a8df-458f72b18dd9,Ryan Hall,Classic Plus Studio,229,true
+4c3e6360-1972-451c-94cf-fc9742849acf,88 Bromsgrove House,Premium Studio,,false
+505d04cb-5bdf-4ed9-8c00-15d7c7d32ce1,The Edge,Accessible Studio,,false
+550789e7-7b39-4f7f-8b51-ca51bfb4c02e,Hollis Wharf,Twodio,,false
+5773bcc9-b6ff-4962-8502-7d22bb1c19fb,88 Bromsgrove House,One Bed Apartment,,false
+58ad27e0-cfb2-4968-b306-e991a8ab68e4,The Port On The Square,Premium Studio,,false
+771a1148-5a16-4ebc-a207-09c3fd9cc532,The Port on The Square,Deluxe Ensuite,,false
+77397495-6ce1-42ec-b91c-78d1ad3d9cf7,The Edge,Silver Studio,,false
+7baabb49-f829-4930-b9e4-d700e9c8f1c5,Ryan Hall,Accessible Studio,219,true
+85f4b8b3-3fbc-4f61-8456-5989a5553b30,88 Bromsgrove House,Premium Plus Studio,209,true
+8c2b9d71-9cf0-4c23-aa2b-7851bf2184dc,800 Bristol Road,Classic Studio Plus,,false
+8ec39531-a5ae-4f6a-b570-fe0713fba51e,The Port on The Square,Accessible Ensuite,,false
+9c921614-2191-4a6c-af11-3d6ad5531f54,The Port on The Square,Compact Ensuite,215,true
+9fe2dabf-0809-4ea3-8ecc-9beb4241b19a,The Port On The Square,Deluxe Studio,,false
+a0e60994-16ce-4040-9c84-882ba47942fa,Ryan Hall,Deluxe Bay Studio,269,true
+a29d93f0-bc56-4453-a87a-37ea98485a23,Hollis Wharf,Classic Ensuite,240,true
+a613a08d-b0e3-494a-b2c3-6a2cd9ab9a54,Hollis Wharf,Superior Studio,315,true
+a81c53e9-c8a6-4df7-90a1-484200110684,The Port on The Square,Standard Studio,,false
+a97a7cd0-22e6-417a-9385-f985660c34d7,Ryan Hall,Premium Plus Studio,249,true
+ac91d7ba-7543-49cc-927b-03ea32575a31,88 Bromsgrove House,Limited Availability Studio,209,true
+b56f14c2-679b-432a-8aa4-f7de732e88d3,The Edge,Platinum Studio,170,true
+b5c7f177-5426-4260-9f8e-44a80813d9f9,Hollis Wharf,Standard Studio,299,true
+b74b70a6-4e8e-41de-9c6a-41eb6047d233,Ryan Hall,Premium Studio,239,true
+b8b5882b-a7ba-4b4b-bf32-5f2e2a6190b0,Hollis Wharf,Superior Plus Studio,320,true
+bf1285b4-651c-4713-8304-76b1b1c60fb1,The Port On The Square,Compact Ensuite,215,true
+c260ec8b-e24e-4a3a-b104-5a9dc1d3f85c,88 Bromsgrove House,Premium One Bed Apartment,,false
+cb757e91-a0e2-435a-b647-ee48e7e52b5c,Hollis Wharf,Accessible Studio,310,true
+cce3a9c8-6a60-45c5-988e-5ee4ba4307ab,The Port on The Square,Classic Ensuite,255,true
+cfa143e5-762f-45b2-9136-e07897340073,The Port On The Square,Standard Ensuite,,false
+d04c93b7-108d-4f50-9f5b-e37cef817145,The Edge,Platinum Plus Studio,175,true
+d1005299-8cac-4052-b92a-7fb4c6c0dd8f,The Port On The Square,Accessible Studio,,false
+d373f8d1-e07b-48e2-ba33-fad15099e4fd,Hollis Wharf,Premium Ensuite,,false
+d47eef8c-31d5-4845-8e6b-36b6b86dac0b,The Port on The Square,Accessible Studio,,false
+d66eb92c-36ee-4f0f-9ec4-fdf1b764ed31,800 Bristol Road,Deluxe Studio,,false
+d9f0aa54-c842-4580-8629-b25932e0296e,The Port On The Square,Standard Studio,,false
+e1b5c235-eb7d-420b-8401-a6eb0048973b,The Port On The Square,Classic Ensuite,255,true
+ecb1ea1e-837f-4db3-b7c9-d94c361225b3,The Port On The Square,Deluxe Ensuite,,false
+ee1c0d97-ac18-4e0e-a68a-c70d73593fa8,Hollis Wharf,Deluxe Studio,360,true
+fb4d1f71-4563-400d-aa07-97a0ce670ed0,Ryan Hall,Classic Studio,219,true
