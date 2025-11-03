@@ -141,7 +141,7 @@
     }
 
     // ---------------- Geocoding (with cache) ----------------
-    const _geoCache = new Map(); // address -> {lat,lon}
+    const _geoCache = new Map(); // key -> {lat,lon}
     async function geocodeAddress(q){
       if (!q) return null;
       const key = q.trim().toLowerCase();
@@ -205,53 +205,93 @@
     }
     function pick(row, names, fallback=null){ for (const k of names){ if (row[k]!==undefined && row[k]!==null) return row[k]; } return fallback; }
 
-    // ---------------- University → closest properties (with smart quote matching) ----------------
+    // ---------- University name normalization (handles curly quotes & aliases) ----------
     function normText(s){
       return String(s ?? '')
         .toLowerCase()
-        .replace(/[\u2018\u2019\u2032]/g, "'") // curly/prime → straight apostrophe
+        .replace(/['’`]/g, "'")
         .replace(/\s+/g, ' ')
         .trim();
     }
+    function uniNeedle(raw=''){
+      const n = normText(raw);
+      const aliases = {
+        'ucl': 'university college london',
+        'kcl': "king's college london",
+        'imperial': 'imperial college london'
+      };
+      return aliases[n] || n;
+    }
 
-    async function fetchNearestPropsByUniversity(universityName, { owner=null, orderBy='distance_walking', limit=8 } = {}){
+    // ---------- University → closest properties (ranked by proximity to THIS uni) ----------
+    async function fetchNearestPropsByUniversity(universityName, { owner=null, limit=8 } = {}, uniGeo=null){
+      // Pull rows (limited to keep client-side work cheap)
       const { data, error } = await supabase.from('university_distance_final').select('*').limit(2000);
       if (error || !Array.isArray(data)) { console.error('[supabase] uni query error', error); return []; }
 
-      const needle = normText(universityName);
+      const needle = uniNeedle(universityName);
 
-      let rows = data.map(r => {
-        const uni   = pick(r, ['University','university','uni_name','uni']);
-        const city  = pick(r, ['City','city']);
-        const prop  = pick(r, ['Property','property','prop_name','name']);
-        const own   = pick(r, ['Owner','owner','provider']);
-        const pid   = pick(r, ['propID','propId','prop_id','property_id','PropID']);
-        const addrP = pick(r, ['Adress Prop','Address Prop','address_prop','property_address','AdressProp','address']);
-        return {
-          _raw:r, university:uni, city, property:prop, owner:own, propID:pid ?? null, addrProp:addrP,
-          distance_walking: pick(r, ['distance_walking','dist_walk_m','walk_m']),
-          time_walking:     pick(r, ['time_walking','walk_time_s','walk_s']),
-          distance_cycling: pick(r, ['distance_cycling','cycle_m']),
-          time_cycling:     pick(r, ['time_cycling','cycle_s']),
-          distance_transport: pick(r, ['distance_transport','transit_m']),
-          time_transport:     pick(r, ['time_transport','transit_s'])
-        };
-      });
+      // Filter to this uni (normalized)
+      let rows = data.map(r => ({
+        _raw:r,
+        university: pick(r, ['University','university','uni_name','uni']),
+        city:       pick(r, ['City','city']),
+        property:   pick(r, ['Property','property','prop_name','name']),
+        owner:      pick(r, ['Owner','owner','provider']),
+        propID:     pick(r, ['propID','propId','prop_id','property_id','PropID']) ?? null,
+        addrProp:   pick(r, ['Adress Prop','Address Prop','address_prop','property_address','AdressProp','address']),
+        // pre-existing travel metrics if present
+        distance_walking:   pick(r, ['distance_walking','dist_walk_m','walk_m']),
+        time_walking:       pick(r, ['time_walking','walk_time_s','walk_s']),
+        distance_cycling:   pick(r, ['distance_cycling','cycle_m']),
+        time_cycling:       pick(r, ['time_cycling','cycle_s']),
+        distance_transport: pick(r, ['distance_transport','transit_m']),
+        time_transport:     pick(r, ['time_transport','transit_s'])
+      }))
+      .filter(r => r.university && normText(r.university).includes(needle));
 
-      // smart comparison: normalize both sides
-      rows = rows.filter(r => r.university && normText(r.university).includes(needle));
       if (owner) rows = rows.filter(r => normText(r.owner||'') === normText(owner));
 
-      const key = orderBy || 'distance_walking';
-      rows.sort((a,b)=> (Number(a[key] ?? 1e15) - Number(b[key] ?? 1e15)));
-      if (limit) rows = rows.slice(0, limit);
+      // Geocode the uni once (for fallback distance calc)
+      if (!uniGeo) uniGeo = await geocodeAddress(`${universityName}, UK`);
 
-      const out = [];
-      const cache = new Map();
+      // Geocode each property (cached), compute fallback meters to uni (if we have uniGeo)
+      const geoCache = new Map();
       for (const r of rows){
         const addr = r.addrProp || `${r.property||''}, ${r.city||''}, UK`;
-        if (!cache.has(addr)) cache.set(addr, await geocodeAddress(addr));
-        const geo = cache.get(addr); if (!geo) continue;
+        if (!geoCache.has(addr)) geoCache.set(addr, await geocodeAddress(addr));
+        const g = geoCache.get(addr);
+        if (g){ r.lat = g.lat; r.lon = g.lon; }
+        if (g && uniGeo){
+          r._fallback_m = metersBetween({lat:g.lat, lon:g.lon}, uniGeo);
+        } else {
+          r._fallback_m = null;
+        }
+      }
+
+      // Rank by: time_walking (s) → distance_walking (m) → fallback meters
+      rows.sort((a,b)=>{
+        const av = [
+          (a.time_walking!=null ? Number(a.time_walking) : Infinity),
+          (a.distance_walking!=null ? Number(a.distance_walking) : Infinity),
+          (a._fallback_m!=null ? a._fallback_m : Infinity)
+        ];
+        const bv = [
+          (b.time_walking!=null ? Number(b.time_walking) : Infinity),
+          (b.distance_walking!=null ? Number(b.distance_walking) : Infinity),
+          (b._fallback_m!=null ? b._fallback_m : Infinity)
+        ];
+        // lexicographic compare
+        for (let i=0;i<3;i++){ if (av[i]!==bv[i]) return av[i]-bv[i]; }
+        return 0;
+      });
+
+      if (limit) rows = rows.slice(0, limit);
+
+      // Output normalized rows (we already geocoded each prop above)
+      const out = [];
+      for (const r of rows){
+        if (r.lat==null || r.lon==null) continue;
         out.push({
           id: r.propID ?? r.property,
           propID: r.propID ?? null,
@@ -259,7 +299,7 @@
           city: r.city,
           owner: r.owner,
           link: null,
-          lat: geo.lat, lon: geo.lon,
+          lat: r.lat, lon: r.lon,
           distance_walking: r.distance_walking,
           time_walking: r.time_walking,
           time_cycling: r.time_cycling,
@@ -379,23 +419,24 @@
         return;
       }
 
-      // 2) University → nearest properties (plus optional POIs & (optional) route)
+      // 2) University → properties ranked by proximity to THIS uni (+ optional POIs & route)
       if (p.uni) {
         clearMarkers();
 
-        const props = await fetchNearestPropsByUniversity(p.uni, {
-          owner: p.owner ?? null,
-          orderBy: p.orderBy ?? 'distance_walking',
-          limit: p.limit ?? 8
-        });
-
-        // Mark university itself for context
+        // Geocode uni once and pass it down so ranking uses that same center
         const uniGeo = await geocodeAddress(`${p.uni}, UK`);
         if (uniGeo) addOrMoveMarker({ id:`uni:${p.uni}`, property:p.uni, city:'', lat:uniGeo.lat, lon:uniGeo.lon, _kind:'uni' });
+
+        const props = await fetchNearestPropsByUniversity(
+          p.uni,
+          { owner: p.owner ?? null, limit: p.limit ?? 5 },
+          uniGeo
+        );
 
         props.forEach(addOrMoveMarker);
         fitToMarkers();
 
+        // POIs around the CLOSEST property (props[0])
         if (p.places && props[0]) {
           const center = { lat: props[0].lat, lon: props[0].lon };
           const near = await fetchPlacesNear(center, {
