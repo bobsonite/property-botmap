@@ -242,11 +242,11 @@
       }
       return out;
     }
-
+const PLACES_TABLE = 'Places_final';
     // ---------------- Places near a coordinate (from places_final) ----------------
     async function fetchPlacesNear(center, { radiusMeters=800, types=[], perTypeLimit=10, propertyName=null, propID=null } = {}){
       // If a propertyName/propID is supplied, filter in SQL so we only geocode that subset.
-      let q = supabase.from('places_final').select('*').limit(500);
+      let q = supabase.from(PLACES_TABLE).select('*').limit(500);
       if (propID!=null) q = q.eq('propID', String(propID));
       else if (propertyName) q = q.ilike('Property', `%${propertyName}%`);
       const { data, error } = await q;
@@ -391,7 +391,7 @@
         let center = null;
         if (p.poiForProperty.propID){
           // grab a name for context from places_final then center via properties table
-          const { data } = await supabase.from('places_final').select('Property').eq('propID', String(p.poiForProperty.propID)).limit(1);
+          const { data } = await supabase.from(PLACES_TABLE).select('Property').eq('propID', String(p.poiForProperty.propID)).limit(1);
           const propName = data?.[0]?.Property;
           center = propName ? await centerForProperty(propName) : null;
           if (!center && propName) center = await geocodeAddress(propName);
