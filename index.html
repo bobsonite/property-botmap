@@ -8,12 +8,15 @@
   <style>
     html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
     .wrap { display:flex; height:100vh; }
-    #botPane { width: 28vw; min-width: 320px; overflow:auto; }
-    #map { flex: 1; }
-    .topbar { position:absolute; right:12px; top:12px; background:#fff; padding:8px 10px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,.08); z-index:2; font-size:12px;}
+    #botPane { width:28vw; min-width:320px; overflow:auto; }
+    #map { flex:1; }
+    .topbar { position:absolute; right:12px; top:12px; background:#fff; padding:8px 10px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,.08); z-index:2; font-size:12px; }
     .pill { display:inline-block; background:#f2f2f2; padding:2px 8px; border-radius:999px; margin-left:6px; }
+
+    /* Markers */
     .pin { width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,.18); border:1px solid #ddd; }
     .pin--prop { border-color:#2563eb; }
+    .pin--poi  { border-color:#a855f7; }
   </style>
 </head>
 <body>
@@ -34,24 +37,23 @@
     const MAPBOX_TOKEN  = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA';
     const SUPABASE_URL  = 'https://fobibwavppcxfqpshrfp.supabase.co';
     const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';
-    const PEER_ABLY_KEY = '9hDZwQ.LMHMDw:rHPAP8YjEeVfa5-SYle5UBnVtGpIFpck8fO4YH42Gp0'; // colleague’s app
+    const PEER_ABLY_KEY = '9hDZwQ.LMHMDw:rHPAP8YjEeVfa5-SYle5UBnVtGpIFpck8fO4YH42Gp0';           // colleague’s Ably app
     const LANDBOT_CONFIG_URL = 'https://storage.googleapis.com/landbot.pro/v3/H-3134109-L1UF7O5PAQOKJEPB/index.json';
     /********************************/
 
-    // --- Session id (display + pass to Landbot just in case) ---
+    /* ---------- session + bot ---------- */
     const newId = () => (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
     const urlParams = new URLSearchParams(location.search);
     const sessionId = urlParams.get('session_id') || newId();
     document.getElementById('sid').textContent = sessionId;
 
-    // --- Landbot in left panel ---
     new window.Landbot.Container({
       container: '#botPane',
       configUrl: LANDBOT_CONFIG_URL,
       variables: { session_id: sessionId }
     });
 
-    // --- Map ---
+    /* ---------- map ---------- */
     mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
       container: 'map',
@@ -60,64 +62,36 @@
       zoom: 9
     });
 
-    // --- Supabase ---
+    /* ---------- supabase & ably ---------- */
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const peerAbly = new Ably.Realtime(PEER_ABLY_KEY);
+    const propsChan = peerAbly.channels.get('props'); // n8n publishes here
 
-    // --- Ably (subscribe to the same channel your colleague uses) ---
-    const peerAbly  = new Ably.Realtime(PEER_ABLY_KEY);
-    const propsChan = peerAbly.channels.get('props'); // publishes { name:"props", data:{ propIDs: ... } }
+    /* ---------- helpers ---------- */
+    const markersProp = new Map(); // propID -> Marker
+    const markersPOI  = new Map(); // UID   -> Marker
 
-    // ---------------- Marker helpers ----------------
-    const markersById = new Map();
+    const escapeHtml = (s='') => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
-    const escapeHtml = (s='') => String(s)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    const emojiForType = (t='') => {
+      const x = String(t).toLowerCase();
+      if (x.includes('cafe') || x.includes('coffee')) return '☕';
+      if (x.includes('bar')  || x.includes('pub'))    return '🍺';
+      if (x.includes('restaurant') || x.includes('food')) return '🍽️';
+      if (x.includes('supermarket') || x.includes('grocery')) return '🛒';
+      if (x.includes('gym')) return '💪';
+      if (x.includes('park')) return '🌳';
+      return '📍';
+    };
 
-    function makeMarkerEl() {
+    const makePin = (cls, text) => {
       const el = document.createElement('div');
-      el.className = 'pin pin--prop';
-      el.textContent = '🏠';
+      el.className = `pin ${cls}`;
+      el.textContent = text;
       return el;
-    }
+    };
 
-    function addOrMoveMarker(row) {
-      const id = row.propID || row.id;
-      const marker = markersById.get(id) ?? new mapboxgl.Marker({ element: makeMarkerEl(), anchor:'bottom' });
-
-      const title   = escapeHtml(row.property || '');
-      const city    = escapeHtml(row.city || '');
-      const owner   = escapeHtml(row.owner || '');
-      const address = escapeHtml(row.adress || row.address || '');
-      const desc    = escapeHtml(row.property_description || '');
-
-      marker
-        .setLngLat([row.lon, row.lat])
-        .setPopup(new mapboxgl.Popup({ offset: 8, maxWidth: '320px' }).setHTML(`
-          <div style="font-size:13px; line-height:1.35">
-            <div style="font-weight:700">${title}</div>
-            <div style="color:#555; margin-top:2px">${city}${owner ? ' · ' + owner : ''}</div>
-            ${address ? `<div style="color:#666; margin-top:6px">${address}</div>` : ''}
-            ${desc ? `<div style="color:#444; margin-top:8px">${desc}</div>` : ''}
-            ${row.link ? `<div style="margin-top:8px"><a href="${row.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
-          </div>
-        `))
-        .addTo(map);
-
-      markersById.set(id, marker);
-    }
-
-    function clearMarkers(){ for (const m of markersById.values()) m.remove(); markersById.clear(); }
-
-    function fitToMarkers(pad=64){
-      const coords = [...markersById.values()].map(m => m.getLngLat());
-      if (!coords.length) return;
-      if (coords.length===1){ map.flyTo({ center: coords[0], zoom: 13.5, duration: 700 }); return; }
-      const b = new mapboxgl.LngLatBounds(coords[0], coords[0]); coords.forEach(c => b.extend(c));
-      map.fitBounds(b, { padding: pad, duration: 800, maxZoom: 14 });
-    }
-
-    // ---------------- Geocoding (cache) ----------------
     const _geoCache = new Map();
     async function geocodeAddress(q){
       if (!q) return null;
@@ -127,82 +101,149 @@
       url.searchParams.set('access_token', MAPBOX_TOKEN);
       url.searchParams.set('limit','1');
       try {
-        const r = await fetch(url); const j = await r.json();
-        const f = j.features?.[0];
-        if (f?.center?.length===2){
-          const val = { lon:f.center[0], lat:f.center[1] };
-          _geoCache.set(key, val);
-          return val;
-        }
-      } catch(e){ console.error('geocode failed', e); }
+        const r = await fetch(url); const j = await r.json(); const f = j.features?.[0];
+        if (f?.center?.length===2){ const val = { lon:f.center[0], lat:f.center[1] }; _geoCache.set(key, val); return val; }
+      } catch(e){ console.error('geocode fail', e); }
       return null;
     }
 
-    // ---------------- Fetch properties by IDs (from test_prop) ----------------
+    function fitToAllMarkers(pad=64){
+      const all = [...markersProp.values(), ...markersPOI.values()];
+      const coords = all.map(m => m.getLngLat());
+      if (!coords.length) return;
+      if (coords.length === 1){ map.flyTo({ center: coords[0], zoom: 13.5, duration: 700 }); return; }
+      const b = new mapboxgl.LngLatBounds(coords[0], coords[0]); coords.forEach(c => b.extend(c));
+      map.fitBounds(b, { padding: pad, duration: 800, maxZoom: 14 });
+    }
+
+    function clearAllMarkers(){
+      for (const m of markersProp.values()) m.remove(); markersProp.clear();
+      for (const m of markersPOI.values())  m.remove();  markersPOI.clear();
+    }
+
+    /* ---------- data fetchers ---------- */
     async function fetchPropsByIds(propIDs){
       if (!Array.isArray(propIDs) || !propIDs.length) return [];
       const { data, error } = await supabase
         .from('test_prop')
         .select('propID, property, city, adress, Long, Lat, link, owner, property_description')
         .in('propID', propIDs.map(String));
-      if (error) { console.error('[supabase] test_prop fetch error', error); return []; }
+      if (error) { console.error('[supabase] test_prop error', error); return []; }
 
       const out = [];
       for (const r of data){
-        let lat = r.Lat ?? null;
-        let lon = r.Long ?? null;
-
-        if (lat == null || lon == null){
-          const q = r.adress || `${r.property||''}, ${r.city||''}, UK`;
-          const g = await geocodeAddress(q);
-          if (g){ lat = g.lat; lon = g.lon; }
-        }
-        if (lat == null || lon == null) continue;
-
-        out.push({
-          id: r.propID,
-          propID: r.propID,
-          property: r.property,
-          city: r.city,
-          adress: r.adress,
-          owner: r.owner,
-          property_description: r.property_description,
-          link: r.link || null,
-          lat, lon,
-          _kind: 'prop'
-        });
+        let lat = r.Lat ?? null, lon = r.Long ?? null;
+        if (lat==null || lon==null){ const g = await geocodeAddress(r.adress || `${r.property||''}, ${r.city||''}, UK`); if (g){ lat=g.lat; lon=g.lon; } }
+        if (lat==null || lon==null) continue;
+        out.push({ ...r, lat, lon });
       }
       return out;
     }
 
-    // Robustly read the propIDs payload (array, comma string, or JSON string)
+    // Pull POIs for a set of propIDs; optional filters keep the map readable
+    async function fetchPOIsForProps(propIDs, { types=['cafe','bar','restaurant'], perTypeLimit=8 } = {}){
+      if (!propIDs?.length) return [];
+      let q = supabase.from('Places_final').select('UID, name, Address, type_single, propID').in('propID', propIDs.map(String)).limit(1000);
+      const { data, error } = await q;
+      if (error) { console.error('[supabase] Places_final error', error); return []; }
+
+      // filter & cap per type to avoid flooding
+      const want = new Set(types.map(t => String(t).toLowerCase()));
+      const buckets = new Map(); // type -> rows
+      const rows = data.filter(r => !types?.length || want.has(String(r.type_single||'').toLowerCase()));
+
+      const out = [];
+      for (const r of rows){
+        if (!buckets.has(r.type_single)) buckets.set(r.type_single, 0);
+        if (buckets.get(r.type_single) >= perTypeLimit) continue;
+
+        // Try to reuse geocode cache; Places_final may not have lat/lon
+        const g = await geocodeAddress(r.Address);
+        if (!g) continue;
+
+        out.push({
+          id: r.UID,
+          name: r.name,
+          address: r.Address,
+          type: r.type_single,
+          propID: r.propID,
+          lat: g.lat, lon: g.lon
+        });
+        buckets.set(r.type_single, buckets.get(r.type_single) + 1);
+      }
+      return out;
+    }
+
+    /* ---------- draw ---------- */
+    function drawProperty(p){
+      const id = String(p.propID);
+      const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: makePin('pin--prop','🏠'), anchor:'bottom' });
+      const html = `
+        <div style="font-size:13px; line-height:1.35">
+          <div style="font-weight:700">${escapeHtml(p.property||'')}</div>
+          <div style="color:#555; margin-top:2px">${escapeHtml(p.city||'')}${p.owner ? ' · '+escapeHtml(p.owner) : ''}</div>
+          ${p.adress ? `<div style="color:#666; margin-top:6px">${escapeHtml(p.adress)}</div>` : ''}
+          ${p.property_description ? `<div style="color:#444; margin-top:8px">${escapeHtml(p.property_description)}</div>` : ''}
+          ${p.link ? `<div style="margin-top:8px"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
+        </div>`;
+      marker.setLngLat([p.lon, p.lat]).setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'320px' }).setHTML(html)).addTo(map);
+      markersProp.set(id, marker);
+    }
+
+    function drawPOI(r){
+      const id = String(r.id);
+      if (markersPOI.has(id)) return;
+      const el = makePin('pin--poi', emojiForType(r.type));
+      const html = `
+        <div style="font-size:13px; line-height:1.35">
+          <div style="font-weight:700">${escapeHtml(r.name||'')}</div>
+          <div style="color:#555; margin-top:2px">${escapeHtml(r.type||'')}</div>
+          ${r.address ? `<div style="color:#666; margin-top:6px">${escapeHtml(r.address)}</div>` : ''}
+        </div>`;
+      const m = new mapboxgl.Marker({ element: el, anchor:'bottom' })
+        .setLngLat([r.lon, r.lat])
+        .setPopup(new mapboxgl.Popup({ offset:8 }).setHTML(html))
+        .addTo(map);
+      markersPOI.set(id, m);
+    }
+
+    /* ---------- ably subscription ---------- */
     function parsePropIDs(raw){
       if (Array.isArray(raw)) return raw.map(v => String(v).trim()).filter(Boolean);
       if (typeof raw === 'string'){
         const s = raw.trim();
-        if (s.startsWith('[')) { try { return JSON.parse(s).map(x=>String(x)); } catch{} }
+        if (s.startsWith('[')) { try { return JSON.parse(s).map(String); } catch{} }
         return s.split(',').map(x => x.trim()).filter(Boolean);
       }
       return [];
     }
 
-    // ---------------- Listen to your colleague's messages ----------------
     propsChan.subscribe(async (msg) => {
       const ids = parsePropIDs(msg?.data?.propIDs);
       if (!ids.length) return;
 
-      clearMarkers();
-      const rows = await fetchPropsByIds(ids);
-      rows.forEach(addOrMoveMarker);
-      fitToMarkers(); // this makes the map jump London → Manchester, etc.
+      clearAllMarkers();
+
+      // 1) properties
+      const props = await fetchPropsByIds(ids);
+      props.forEach(drawProperty);
+
+      // 2) nearby places for these properties (cafes/bars/restaurants, limited per type)
+      const pois = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant'], perTypeLimit:8 });
+      pois.forEach(drawPOI);
+
+      // adjust view across props + POIs
+      fitToAllMarkers();
     });
 
-    // Manual test helper in console:  _show('12475','19410')
+    // manual console helper:  _show('12475','19410')
     window._show = async (...ids) => {
-      clearMarkers();
-      const rows = await fetchPropsByIds(ids.flat());
-      rows.forEach(addOrMoveMarker);
-      fitToMarkers();
+      clearAllMarkers();
+      const props = await fetchPropsByIds(ids.flat());
+      props.forEach(drawProperty);
+      const pois  = await fetchPOIsForProps(ids.flat(), { types:['cafe','bar','restaurant'], perTypeLimit:8 });
+      pois.forEach(drawPOI);
+      fitToAllMarkers();
     };
   </script>
 </body>
