@@ -78,6 +78,74 @@
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const ably = new Ably.Realtime({ key: ABLY_CLIENT_KEY, clientId: sessionId });
     const channel = ably.channels.get(`filters:${sessionId}`);
+
+    // ---- NEW: fetch properties by propIDs from test_prop (the table your colleague uses) ----
+async function fetchPropsByIds(propIDs){
+  if (!Array.isArray(propIDs) || !propIDs.length) return [];
+
+  // Supabase columns used by your colleague: Long/Lat (note the capital L), property, city, adress, etc.
+  const { data, error } = await supabase
+    .from('test_prop')
+    .select('propID, property, city, adress, Long, Lat, property_description, owner, link')
+    .in('propID', propIDs.map(String));
+
+  if (error) { console.error('[supabase] test_prop fetch error', error); return []; }
+
+  // Normalize to your marker shape
+  const out = [];
+  for (const r of data){
+    const lat = r.Lat ?? r.lat ?? null;
+    const lon = r.Long ?? r.long ?? r.lng ?? null;
+
+    // If for any row Lat/Long are missing, fall back to geocoding the address
+    let g = null;
+    if (lat == null || lon == null){
+      const q = r.adress || `${r.property||''}, ${r.city||''}, UK`;
+      g = await geocodeAddress(q);
+    }
+
+    const finalLat = lat ?? g?.lat;
+    const finalLon = lon ?? g?.lon;
+    if (finalLat == null || finalLon == null) continue;
+
+    out.push({
+      id: r.propID,
+      propID: r.propID,
+      property: r.property,
+      city: r.city,
+      address: r.adress,
+      link: r.link || null,
+      lat: finalLat,
+      lon: finalLon,
+      _kind: 'prop'
+    });
+  }
+  return out;
+}
+
+    // ---- NEW: listen to your colleague's simple 'props' channel ----
+// NOTE: his n8n currently publishes to a *global* 'props' channel (no session).
+// Until n8n adds session scoping, these messages are shared across all visitors.
+const propsChannel = ably.channels.get('props');
+
+propsChannel.subscribe('props', async (msg) => {
+  // Accept array OR comma-separated string
+  const raw = msg?.data?.propIDs;
+  const ids = Array.isArray(raw)
+    ? raw.map(v => String(v).trim()).filter(Boolean)
+    : String(raw ?? '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+  if (!ids.length) return;
+
+  // Show only those properties, using the same table your colleague uses
+  clearMarkers();
+  const rows = await fetchPropsByIds(ids);
+  rows.forEach(addOrMoveMarker);
+  fitToMarkers();
+});
     window.ably = ably;
 
     // ---------------- Marker helpers ----------------
