@@ -173,6 +173,27 @@
       return out;
     }
 
+    /* NEW: fetch everything for initial render */
+    async function fetchAllProps(){
+      const { data, error } = await supabase
+        .from('test_prop')
+        .select('propID, property, city, adress, Long, Lat, link, owner, property_description')
+        .limit(500); // plenty (you currently have ~66)
+      if (error) { console.error('[supabase] fetchAllProps error', error); return []; }
+
+      const out = [];
+      for (const r of data){
+        let lat = r.Lat ?? null, lon = r.Long ?? null;
+        if (lat==null || lon==null){
+          const g = await geocodeAddress(r.adress || `${r.property||''}, ${r.city||''}, UK`);
+          if (g){ lat=g.lat; lon=g.lon; }
+        }
+        if (lat==null || lon==null) continue;
+        out.push({ ...r, lat, lon });
+      }
+      return out;
+    }
+
     async function fetchPOIsForProps(propIDs, { types=['cafe','bar','restaurant'], perTypeLimit=8 } = {}){
       if (!propIDs?.length) return [];
       const { data, error } = await supabase
@@ -311,9 +332,22 @@
       // 3) shortlist
       renderList(props);
 
-      // 4) adjust viewport (this fixes the “stuck in London” issue)
+      // 4) adjust viewport
       fitToAllMarkers();
     });
+
+    /************ Initial load: show ALL properties ************/
+    async function bootstrap(){
+      const props = await fetchAllProps();
+      if (!props.length) { renderList([]); return; }
+
+      clearAllMarkers();
+      props.forEach(drawProperty);
+      renderList(props);
+      fitToAllMarkers();
+      // (intentionally NOT loading POIs on first load to avoid clutter)
+    }
+    bootstrap();
 
     // manual console helper:  _show('12475','21144')
     window._show = async (...ids) => {
