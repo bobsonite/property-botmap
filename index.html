@@ -25,32 +25,26 @@
 
   <!-- Libs -->
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
-  <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
   <script type="module" src="https://cdn.landbot.io/landbot-3/landbot-3.0.0.mjs"></script>
 
   <script type="module">
     /************ CONFIG ************/
-    const MAPBOX_TOKEN      = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA';
-    // Your Ably key (kept for future, not required for props flow)
-    const ABLY_CLIENT_KEY   = 'Pc6iLw.uon00w:xfKlxamIh-D0uHTtyW5l_VOzDdk2BEFjyeHsGYcC4N0';
-    // Your colleague's Ably key (n8n publishes here → channel "props")
-    const PEER_ABLY_KEY     = '9hDZwQ.LMHMDw:rHPAP8YjEeVfa5-SYle5UBnVtGpIFpck8fO4YH42Gp0';
-
-    const SUPABASE_URL      = 'https://fobibwavppcxfqpshrfp.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';
-
-    // Landbot config (same as your colleague’s)
+    const MAPBOX_TOKEN  = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA';
+    const SUPABASE_URL  = 'https://fobibwavppcxfqpshrfp.supabase.co';
+    const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';
+    const PEER_ABLY_KEY = '9hDZwQ.LMHMDw:rHPAP8YjEeVfa5-SYle5UBnVtGpIFpck8fO4YH42Gp0'; // colleague’s app
     const LANDBOT_CONFIG_URL = 'https://storage.googleapis.com/landbot.pro/v3/H-3134109-L1UF7O5PAQOKJEPB/index.json';
     /********************************/
 
-    // --- Session id (for display + Landbot variable) ---
+    // --- Session id (display + pass to Landbot just in case) ---
     const newId = () => (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
     const urlParams = new URLSearchParams(location.search);
     const sessionId = urlParams.get('session_id') || newId();
     document.getElementById('sid').textContent = sessionId;
 
-    // --- Landbot embed in left panel ---
+    // --- Landbot in left panel ---
     new window.Landbot.Container({
       container: '#botPane',
       configUrl: LANDBOT_CONFIG_URL,
@@ -67,15 +61,18 @@
     });
 
     // --- Supabase ---
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    // --- Ably: keep your app (future use), plus peer app for "props" ---
-    const ably      = new Ably.Realtime({ key: ABLY_CLIENT_KEY, clientId: sessionId }); // not used right now
-    const peerAbly  = new Ably.Realtime(PEER_ABLY_KEY); // THIS is where the bot publishes
-    const propsChan = peerAbly.channels.get('props');
+    // --- Ably (subscribe to the same channel your colleague uses) ---
+    const peerAbly  = new Ably.Realtime(PEER_ABLY_KEY);
+    const propsChan = peerAbly.channels.get('props'); // publishes { name:"props", data:{ propIDs: ... } }
 
     // ---------------- Marker helpers ----------------
     const markersById = new Map();
+
+    const escapeHtml = (s='') => String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
     function makeMarkerEl() {
       const el = document.createElement('div');
@@ -87,26 +84,37 @@
     function addOrMoveMarker(row) {
       const id = row.propID || row.id;
       const marker = markersById.get(id) ?? new mapboxgl.Marker({ element: makeMarkerEl(), anchor:'bottom' });
+
+      const title   = escapeHtml(row.property || '');
+      const city    = escapeHtml(row.city || '');
+      const owner   = escapeHtml(row.owner || '');
+      const address = escapeHtml(row.adress || row.address || '');
+      const desc    = escapeHtml(row.property_description || '');
+
       marker
         .setLngLat([row.lon, row.lat])
-        .setPopup(new mapboxgl.Popup({ offset: 8 }).setHTML(`
+        .setPopup(new mapboxgl.Popup({ offset: 8, maxWidth: '320px' }).setHTML(`
           <div style="font-size:13px; line-height:1.35">
-            <div style="font-weight:600">${row.property || ''}</div>
-            <div style="color:#666">${row.city || ''}</div>
-            ${row.link ? `<div style="margin-top:6px"><a href="${row.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
+            <div style="font-weight:700">${title}</div>
+            <div style="color:#555; margin-top:2px">${city}${owner ? ' · ' + owner : ''}</div>
+            ${address ? `<div style="color:#666; margin-top:6px">${address}</div>` : ''}
+            ${desc ? `<div style="color:#444; margin-top:8px">${desc}</div>` : ''}
+            ${row.link ? `<div style="margin-top:8px"><a href="${row.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
           </div>
         `))
         .addTo(map);
+
       markersById.set(id, marker);
     }
 
     function clearMarkers(){ for (const m of markersById.values()) m.remove(); markersById.clear(); }
-    function fitToMarkers(pad=60){
+
+    function fitToMarkers(pad=64){
       const coords = [...markersById.values()].map(m => m.getLngLat());
       if (!coords.length) return;
-      if (coords.length===1){ map.flyTo({ center: coords[0], zoom: 14, duration: 600 }); return; }
+      if (coords.length===1){ map.flyTo({ center: coords[0], zoom: 13.5, duration: 700 }); return; }
       const b = new mapboxgl.LngLatBounds(coords[0], coords[0]); coords.forEach(c => b.extend(c));
-      map.fitBounds(b, { padding: pad, duration: 700 });
+      map.fitBounds(b, { padding: pad, duration: 800, maxZoom: 14 });
     }
 
     // ---------------- Geocoding (cache) ----------------
@@ -135,58 +143,61 @@
       if (!Array.isArray(propIDs) || !propIDs.length) return [];
       const { data, error } = await supabase
         .from('test_prop')
-        .select('propID, property, city, adress, Long, Lat, link')
+        .select('propID, property, city, adress, Long, Lat, link, owner, property_description')
         .in('propID', propIDs.map(String));
       if (error) { console.error('[supabase] test_prop fetch error', error); return []; }
 
       const out = [];
       for (const r of data){
-        const lat = r.Lat ?? null;
-        const lon = r.Long ?? null;
+        let lat = r.Lat ?? null;
+        let lon = r.Long ?? null;
 
-        let g = null;
         if (lat == null || lon == null){
           const q = r.adress || `${r.property||''}, ${r.city||''}, UK`;
-          g = await geocodeAddress(q);
+          const g = await geocodeAddress(q);
+          if (g){ lat = g.lat; lon = g.lon; }
         }
-        const finalLat = lat ?? g?.lat;
-        const finalLon = lon ?? g?.lon;
-        if (finalLat == null || finalLon == null) continue;
+        if (lat == null || lon == null) continue;
 
         out.push({
           id: r.propID,
           propID: r.propID,
           property: r.property,
           city: r.city,
-          lat: finalLat,
-          lon: finalLon,
+          adress: r.adress,
+          owner: r.owner,
+          property_description: r.property_description,
           link: r.link || null,
+          lat, lon,
           _kind: 'prop'
         });
       }
       return out;
     }
 
-    // ---------------- Listen to your colleague's "props" messages ----------------
-    propsChan.subscribe(async (msg) => {
-      const raw = msg?.data?.propIDs;
-      // Accept array OR comma-separated string
-      const ids = Array.isArray(raw)
-        ? raw.map(v => String(v).trim()).filter(Boolean)
-        : String(raw ?? '')
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean);
+    // Robustly read the propIDs payload (array, comma string, or JSON string)
+    function parsePropIDs(raw){
+      if (Array.isArray(raw)) return raw.map(v => String(v).trim()).filter(Boolean);
+      if (typeof raw === 'string'){
+        const s = raw.trim();
+        if (s.startsWith('[')) { try { return JSON.parse(s).map(x=>String(x)); } catch{} }
+        return s.split(',').map(x => x.trim()).filter(Boolean);
+      }
+      return [];
+    }
 
+    // ---------------- Listen to your colleague's messages ----------------
+    propsChan.subscribe(async (msg) => {
+      const ids = parsePropIDs(msg?.data?.propIDs);
       if (!ids.length) return;
 
       clearMarkers();
       const rows = await fetchPropsByIds(ids);
       rows.forEach(addOrMoveMarker);
-      fitToMarkers();
+      fitToMarkers(); // this makes the map jump London → Manchester, etc.
     });
 
-    // (Optional) expose a tiny helper for manual testing in console
+    // Manual test helper in console:  _show('12475','19410')
     window._show = async (...ids) => {
       clearMarkers();
       const rows = await fetchPropsByIds(ids.flat());
