@@ -28,6 +28,18 @@
       --ring-stroke:#2563eb;
       --ring-label:#1f2937;
       --ring-halo:#ffffff;
+
+      /* Amenity / Service tints */
+      --amen-border:#10b981;  /* emerald-500 */
+      --amen-bg:#10b9811a;
+      --serv-border:#8b5cf6;  /* violet-500 */
+      --serv-bg:#8b5cf61a;
+
+      /* Tooltip */
+      --tt-bg: var(--card);
+      --tt-text: var(--text);
+      --tt-border: var(--card-border);
+      --tt-shadow: 0 6px 24px rgba(0,0,0,.12);
     }
     html[data-theme="dark"]{
       --bg:#0b1220;
@@ -47,6 +59,16 @@
       --ring-stroke:#60a5fa;
       --ring-label:#e5e7eb;
       --ring-halo:#0b1220;
+
+      --amen-border:#34d399;  /* emerald-400 */
+      --amen-bg:#10b98133;
+      --serv-border:#a78bfa;  /* violet-400 */
+      --serv-bg:#8b5cf633;
+
+      --tt-bg: var(--card);
+      --tt-text: var(--text);
+      --tt-border:#273449;
+      --tt-shadow: 0 8px 30px rgba(0,0,0,.35);
     }
     html[data-theme="streets"]{ /* same palette as light */ }
 
@@ -99,15 +121,44 @@
       color:var(--text); opacity:.9; font-size:13px; margin-top:8px; line-height:1.35;
       display:-webkit-box; -webkit-line-clamp:5; line-clamp:5; -webkit-box-orient:vertical; overflow:hidden;
     }
+
+    /* Chips */
     .chips{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
-    .chip{ display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:4px 8px; border-radius:999px; background:var(--chip-bg); color:var(--chip-text); border:1px solid var(--card-border); }
+    .chip{
+      display:inline-flex; align-items:center; justify-content:center;
+      gap:6px; font-size:12px; padding:4px 8px; border-radius:999px;
+      background:var(--chip-bg); color:var(--chip-text); border:1px solid var(--card-border);
+      min-width:28px; min-height:24px; user-select:none;
+    }
     .chip b{ font-weight:600; }
+
+    /* Distinguish types clearly */
+    .chip--amen{ border-color:var(--amen-border); background:var(--amen-bg); }
+    .chip--serv{ border-color:var(--serv-border); background:var(--serv-bg); }
+    .chip--poi { /* default grey already separates it */ }
+
+    .legend{
+      display:flex; gap:8px; align-items:center; margin:8px 12px 0 12px; font-size:12px; color:var(--muted);
+    }
+    .legend .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; }
+    .legend .dot.amen{ background:var(--amen-border); opacity:.6; }
+    .legend .dot.serv{ background:var(--serv-border); opacity:.6; }
+    .legend .dot.poi { background:#9ca3af; opacity:.6; }
+
     .link{ margin-top:8px; font-size:13px; }
     .empty{ color:var(--muted); font-size:13px; padding:14px; margin:12px; border:1px dashed var(--card-border); border-radius:10px; background:var(--card); }
 
     /* Mapbox popups honor theme */
     .mapboxgl-popup-content{ background:var(--popup-bg) !important; color:var(--popup-text) !important; }
     .mapboxgl-popup-tip{ border-top-color:var(--popup-bg) !important; border-bottom-color:var(--popup-bg) !important; }
+
+    /* Tooltip */
+    .tt{
+      position:fixed; z-index:9999; pointer-events:none;
+      background:var(--tt-bg); color:var(--tt-text); border:1px solid var(--tt-border);
+      padding:6px 8px; border-radius:8px; box-shadow:var(--tt-shadow); font-size:12px;
+      max-width:260px; line-height:1.3;
+    }
 
     @media (max-width:980px){ #listPane{ display:none; } }
   </style>
@@ -186,7 +237,7 @@
       if (map.getStyle()?.sprite?.includes(t)) return;
       map.setStyle(STYLES[t]);
       map.once('style.load', () => {
-        if (currentRingsGeo) addRingLayers(currentRingsGeo); // restore rings + labels after style change
+        if (currentRingsGeo) addRingLayers(currentRingsGeo);
       });
     }
     btnLight  .addEventListener('click', ()=> setTheme('light'));
@@ -211,8 +262,8 @@
     const listPane     = document.getElementById('listPane');
     const markersProp  = new Map(); // propID -> Marker
     const markersPOI   = new Map(); // UID   -> Marker
-    let   currentProps = [];        // props with _amenityCounts + _amenServIcons
-    let   currentRingsGeo = null;   // FeatureCollection for polygons + labels
+    let   currentProps = [];        // props with _amenityCounts + _amenServ (label+icon)
+    let   currentRingsGeo = null;
     let   hideRingsTimer = null;
 
     const escapeHtml = (s='') => String(s)
@@ -383,7 +434,7 @@
       return { list, counts };
     }
 
-    // NEW: fetch amenities + services icons per property
+    // Fetch amenities + services -> {amen:[{icon,label}], serv:[{icon,label}]}
     async function fetchAmenAndServices(propIDs){
       const ids = (propIDs||[]).map(String);
       const byProp = new Map(ids.map(id => [id, { amen:[], serv:[] }]));
@@ -395,26 +446,14 @@
           .select('property_id, propid, Amenity')
           .in('property_id', ids)
           .limit(5000);
-        if (error || !data?.length){
-          const r2 = await supabase
-            .from('amenities')
-            .select('propid, Amenity')
-            .in('propid', ids)
-            .limit(5000);
-          if (!r2.error && r2.data){
-            for (const r of r2.data){
-              const pid = String(r.propid);
-              if (byProp.has(pid)) byProp.get(pid).amen.push(String(r.Amenity||''));
-            }
-          }
-        } else {
-          for (const r of data){
-            const pid = String(r.property_id ?? r.propid ?? '');
-            if (byProp.has(pid)) byProp.get(pid).amen.push(String(r.Amenity||''));
-          }
+        const rows = (!error && data?.length) ? data : (await supabase
+          .from('amenities').select('propid, Amenity').in('propid', ids).limit(5000)).data || [];
+        for (const r of rows){
+          const pid = String(r.property_id ?? r.propid ?? '');
+          const label = String(r.Amenity || '').trim();
+          if (byProp.has(pid) && label) byProp.get(pid).amen.push(label);
         }
       }
-
       // services
       {
         const { data, error } = await supabase
@@ -422,31 +461,22 @@
           .select('property_id, propid, service')
           .in('property_id', ids)
           .limit(5000);
-        if (error || !data?.length){
-          const r2 = await supabase
-            .from('services')
-            .select('propid, service')
-            .in('propid', ids)
-            .limit(5000);
-          if (!r2.error && r2.data){
-            for (const r of r2.data){
-              const pid = String(r.propid);
-              if (byProp.has(pid)) byProp.get(pid).serv.push(String(r.service||''));
-            }
-          }
-        } else {
-          for (const r of data){
-            const pid = String(r.property_id ?? r.propid ?? '');
-            if (byProp.has(pid)) byProp.get(pid).serv.push(String(r.service||''));
-          }
+        const rows = (!error && data?.length) ? data : (await supabase
+          .from('services').select('propid, service').in('propid', ids).limit(5000)).data || [];
+        for (const r of rows){
+          const pid = String(r.property_id ?? r.propid ?? '');
+          const label = String(r.service || '').trim();
+          if (byProp.has(pid) && label) byProp.get(pid).serv.push(label);
         }
       }
 
+      // Dedup per property (by label), map to icon
       const result = new Map();
       for (const [pid, {amen, serv}] of byProp.entries()){
-        const amenIcons = [...new Set(amen.map(emojiForAmenityOrService))];
-        const servIcons = [...new Set(serv.map(emojiForAmenityOrService))];
-        result.set(pid, { amenIcons, servIcons });
+        const uniq = (arr)=> [...new Map(arr.map(s => [s.toLowerCase(), s])).values()];
+        const amenList = uniq(amen).slice(0, 24).map(label => ({ icon:emojiForAmenityOrService(label), label }));
+        const servList = uniq(serv).slice(0, 24).map(label => ({ icon:emojiForAmenityOrService(label), label }));
+        result.set(pid, { amen: amenList, serv: servList });
       }
       return result;
     }
@@ -537,7 +567,7 @@
       const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
 
       const chipsPOI = p._amenityCounts ? makeChipRow(p._amenityCounts) : '';
-      const chipsAS  = p._amenServIcons ? makeAmenityServiceRow(p._amenServIcons) : '';
+      const chipsAS  = p._amenServ ? makeAmenityServiceRow(p._amenServ) : '';
       const html = `
         <div style="font-size:13px; line-height:1.35">
           <div style="font-weight:700">${escapeHtml(p.property||'')}</div>
@@ -575,22 +605,36 @@
       markersPOI.set(id, m);
     }
 
+    /* POI chips (counts) */
     function makeChipRow(a){
       const bits = [];
-      if (a.cafe)       bits.push(`<span class="chip">☕ <b>${a.cafe}</b></span>`);
-      if (a.bar)        bits.push(`<span class="chip">🍺 <b>${a.bar}</b></span>`);
-      if (a.restaurant) bits.push(`<span class="chip">🍽️ <b>${a.restaurant}</b></span>`);
-      if (a.gym)        bits.push(`<span class="chip">💪 <b>${a.gym}</b></span>`);
-      if (a.park)       bits.push(`<span class="chip">🌳 <b>${a.park}</b></span>`);
+      if (a.cafe)       bits.push(`<span class="chip chip--poi" aria-label="Nearby cafés">☕ <b>${a.cafe}</b></span>`);
+      if (a.bar)        bits.push(`<span class="chip chip--poi" aria-label="Nearby bars">🍺 <b>${a.bar}</b></span>`);
+      if (a.restaurant) bits.push(`<span class="chip chip--poi" aria-label="Nearby restaurants">🍽️ <b>${a.restaurant}</b></span>`);
+      if (a.gym)        bits.push(`<span class="chip chip--poi" aria-label="Nearby gyms">💪 <b>${a.gym}</b></span>`);
+      if (a.park)       bits.push(`<span class="chip chip--poi" aria-label="Nearby parks">🌳 <b>${a.park}</b></span>`);
       return bits.length ? `<div class="chips">${bits.join('')}</div>` : '';
     }
 
-    // NEW: render amenities/services icon row (up to N icons)
-    function makeAmenityServiceRow({ amenIcons=[], servIcons=[] } = {}, maxTotal=8){
-      const icons = [...amenIcons, ...servIcons].slice(0, maxTotal);
-      if (!icons.length) return '';
-      const html = icons.map(ic => `<span class="chip">${ic}</span>`).join('');
+    /* Amenity/Service chips with tooltips */
+    function makeAmenityServiceRow({ amen=[], serv=[] } = {}, maxTotal=10){
+      const items = [...amen.map(x => ({...x, _t:'amen'})), ...serv.map(x => ({...x, _t:'serv'}))].slice(0, maxTotal);
+      if (!items.length) return '';
+      const html = items.map(({icon,label,_t}) =>
+        `<span class="chip chip--${_t}" data-tip="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icon}</span>`
+      ).join('');
       return `<div class="chips">${html}</div>`;
+    }
+
+    /************ Legend (helps at-a-glance distinction) ************/
+    function renderLegend(){
+      const legend = document.createElement('div');
+      legend.className = 'legend';
+      legend.innerHTML = `
+        <span><span class="dot poi"></span> POIs</span>
+        <span><span class="dot amen"></span> Amenities</span>
+        <span><span class="dot serv"></span> Services</span>`;
+      listPane.prepend(legend);
     }
 
     /************ Shortlist UI ************/
@@ -607,10 +651,12 @@
           ${p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : ''}
           ${p.property_description ? `<div class="desc">${escapeHtml(p.property_description)}</div>` : ''}
           ${p._amenityCounts ? makeChipRow(p._amenityCounts) : ''}
-          ${p._amenServIcons ? makeAmenityServiceRow(p._amenServIcons) : ''}
+          ${p._amenServ ? makeAmenityServiceRow(p._amenServ) : ''}
           ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
         </article>
       `).join('');
+
+      renderLegend(); // small label row on top
 
       listPane.querySelectorAll('.card').forEach(card => {
         const id = card.getAttribute('data-id');
@@ -631,6 +677,9 @@
           setTimeout(()=> m.togglePopup(), 650);
         });
       });
+
+      // enable tooltips for amenity/service chips
+      wireTooltips();
     }
 
     function toggleMarkerHot(id, on){
@@ -642,6 +691,44 @@
       const card = listPane.querySelector(`.card[data-id="${CSS.escape(String(id))}"]`);
       if (!card) return;
       card.classList.toggle('is-active', !!on);
+    }
+
+    /************ Tiny tooltip system (hover + click) ************/
+    let ttEl = null;
+    function ensureTooltip(){
+      if (!ttEl){
+        ttEl = document.createElement('div');
+        ttEl.className = 'tt';
+        ttEl.style.display = 'none';
+        document.body.appendChild(ttEl);
+      }
+      return ttEl;
+    }
+    function showTip(text, x, y){
+      const el = ensureTooltip();
+      el.textContent = text;
+      el.style.left = `${Math.min(window.innerWidth-220, x+10)}px`;
+      el.style.top  = `${Math.max(8, y+10)}px`;
+      el.style.display = 'block';
+    }
+    function hideTip(){
+      if (ttEl) ttEl.style.display = 'none';
+    }
+    function wireTooltips(){
+      const chips = document.querySelectorAll('.chip[data-tip]');
+      chips.forEach(ch => {
+        ch.addEventListener('mouseenter', (e)=> showTip(ch.getAttribute('data-tip')||'', e.clientX, e.clientY));
+        ch.addEventListener('mousemove', (e)=> showTip(ch.getAttribute('data-tip')||'', e.clientX, e.clientY));
+        ch.addEventListener('mouseleave', hideTip);
+        ch.addEventListener('click', (e)=> {
+          e.stopPropagation();
+          const r = ch.getBoundingClientRect();
+          showTip(ch.getAttribute('data-tip')||'', r.right, r.top);
+          // hide when clicking elsewhere
+          const once = () => { hideTip(); document.removeEventListener('click', once, true); };
+          document.addEventListener('click', once, true);
+        });
+      });
     }
 
     /************ Ably subscription ************/
@@ -664,14 +751,12 @@
       const props = await fetchPropsByIds(ids);
       const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
       const { list: pois, counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:8, radiusMeters:800 }, centers);
-
-      // NEW: amenities & services icons
       const amenServ = await fetchAmenAndServices(ids);
 
       props.forEach(p => {
         const pid = String(p.propID);
         p._amenityCounts = counts.get(pid) || null;
-        p._amenServIcons = amenServ.get(pid) || { amenIcons:[], servIcons:[] };
+        p._amenServ      = amenServ.get(pid) || { amen:[], serv:[] };
       });
 
       props.forEach(drawProperty);
@@ -688,14 +773,13 @@
 
       const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
       const ids = props.map(p => String(p.propID));
-
       const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
       const amenServ = await fetchAmenAndServices(ids);
 
       props.forEach(p => {
         const pid = String(p.propID);
         p._amenityCounts = counts.get(pid) || null;
-        p._amenServIcons = amenServ.get(pid) || { amenIcons:[], servIcons:[] };
+        p._amenServ      = amenServ.get(pid) || { amen:[], serv:[] };
       });
 
       clearAllMarkers();
