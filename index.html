@@ -19,6 +19,19 @@
       --chip-bg:#f3f4f6;
       --chip-text:#111827;
     }
+    /* Streets uses same palette as light (override later if you want) */
+    html[data-theme="streets"]{
+      --bg:#ffffff;
+      --text:#111827;
+      --muted:#6b7280;
+      --card:#ffffff;
+      --card-border:#e5e7eb;
+      --card-hover:#f6f9ff;
+      --popup-bg:#ffffff;
+      --popup-text:#111827;
+      --chip-bg:#f3f4f6;
+      --chip-text:#111827;
+    }
     html[data-theme="dark"]{
       --bg:#0b1220;
       --text:#e5e7eb;
@@ -35,7 +48,6 @@
     html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
     .wrap { display:flex; height:100vh; }
 
-    /* left bot, center map, right shortlist */
     #botPane { width:28vw; min-width:320px; overflow:auto; }
     #map     { flex:1; position:relative; }
     #listPane{
@@ -43,7 +55,6 @@
       border-left:1px solid var(--card-border); background:var(--bg);
     }
 
-    /* topbar (session + theme toggle) */
     .topbar {
       position:absolute; right:12px; top:12px; z-index:2;
       background:var(--card); color:var(--text);
@@ -56,7 +67,6 @@
     .toggle button{ font-size:12px; border:0; padding:4px 8px; background:transparent; color:var(--chip-text); border-radius:999px; cursor:pointer; }
     .toggle button[aria-pressed="true"]{ background:var(--card); color:var(--text); }
 
-    /* markers */
     .pin{
       width:30px; height:30px; display:flex; align-items:center; justify-content:center;
       background:var(--card); border:1px solid var(--card-border);
@@ -67,7 +77,6 @@
     .pin--poi  { outline:2px solid #a855f722; }
     .pin.is-hot{ transform:scale(1.1); box-shadow:0 2px 10px rgba(37,99,235,.35); }
 
-    /* shortlist cards */
     .card{
       background:var(--card); color:var(--text); margin:12px; padding:14px; border-radius:12px;
       box-shadow:0 1px 8px rgba(0,0,0,0.06);
@@ -86,7 +95,6 @@
     .link{ margin-top:8px; font-size:13px; }
     .empty{ color:var(--muted); font-size:13px; padding:14px; margin:12px; border:1px dashed var(--card-border); border-radius:10px; background:var(--card); }
 
-    /* mapbox popup theming */
     .mapboxgl-popup-content{ background:var(--popup-bg) !important; color:var(--popup-text) !important; }
     .mapboxgl-popup-tip{ border-top-color:var(--popup-bg) !important; border-bottom-color:var(--popup-bg) !important; }
 
@@ -101,8 +109,9 @@
       <div class="topbar">
         <span class="pill">session_id: <span id="sid"></span></span>
         <div class="toggle" role="group" aria-label="Theme">
-          <button id="btnLight" type="button" aria-pressed="true">Light</button>
-          <button id="btnDark"  type="button" aria-pressed="false">Dark</button>
+          <button id="btnLight"   type="button" aria-pressed="true">Light</button>
+          <button id="btnDark"    type="button" aria-pressed="false">Dark</button>
+          <button id="btnStreets" type="button" aria-pressed="false">Streets</button>
         </div>
       </div>
     </div>
@@ -110,7 +119,6 @@
     <aside id="listPane"></aside>
   </div>
 
-  <!-- libs -->
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
@@ -124,10 +132,11 @@
     const PEER_ABLY_KEY = '9hDZwQ.LMHMDw:rHPAP8YjEeVfa5-SYle5UBnVtGpIFpck8fO4YH42Gp0';
     const LANDBOT_CONFIG_URL = 'https://storage.googleapis.com/landbot.pro/v3/H-3134109-L1UF7O5PAQOKJEPB/index.json';
 
-    // Mapbox styles for themes
+    // Map styles
     const STYLES = {
-      light: 'mapbox://styles/mapbox/light-v11',
-      dark:  'mapbox://styles/mapbox/dark-v11'
+      light:   'mapbox://styles/mapbox/light-v11',
+      dark:    'mapbox://styles/mapbox/dark-v11',
+      streets: 'mapbox://styles/mapbox/streets-v12' // colored parks/water/roads
     };
 
     /************ Session + bot ************/
@@ -143,33 +152,40 @@
     });
 
     /************ Theme ************/
-    const btnLight = document.getElementById('btnLight');
-    const btnDark  = document.getElementById('btnDark');
-    const storedTheme = localStorage.getItem('theme') || 'light';
-    document.documentElement.setAttribute('data-theme', storedTheme);
-    btnLight.setAttribute('aria-pressed', storedTheme==='light' ? 'true':'false');
-    btnDark .setAttribute('aria-pressed', storedTheme==='dark'  ? 'true':'false');
+    const btnLight   = document.getElementById('btnLight');
+    const btnDark    = document.getElementById('btnDark');
+    const btnStreets = document.getElementById('btnStreets');
+
+    const stored = localStorage.getItem('theme') || 'light';
+    const initialTheme = (stored in STYLES) ? stored : 'light';
+    document.documentElement.setAttribute('data-theme', initialTheme);
+    reflectPressed(initialTheme);
+
+    function reflectPressed(mode){
+      btnLight  .setAttribute('aria-pressed', mode==='light'   ? 'true':'false');
+      btnDark   .setAttribute('aria-pressed', mode==='dark'    ? 'true':'false');
+      btnStreets.setAttribute('aria-pressed', mode==='streets' ? 'true':'false');
+    }
 
     function setTheme(mode){
-      const t = (mode==='dark') ? 'dark' : 'light';
+      const t = (mode in STYLES) ? mode : 'light';
       document.documentElement.setAttribute('data-theme', t);
-      btnLight.setAttribute('aria-pressed', t==='light' ? 'true' : 'false');
-      btnDark .setAttribute('aria-pressed', t==='dark'  ? 'true' : 'false');
+      reflectPressed(t);
       localStorage.setItem('theme', t);
-      // switch the MAP STYLE as well
-      if (map.getStyle()?.sprite?.includes(t)) return; // already on desired theme
+      if (!map.getStyle() || map.getStyle().sprite?.includes(t)) return;
       map.setStyle(STYLES[t]);
-      // Wait for new style to load before doing any layer operations (markers survive automatically)
-      map.once('style.load', () => {/* nothing else to re-add right now */});
+      map.once('style.load', ()=>{ /* DOM markers persist; no re-adding needed */ });
     }
-    btnLight.addEventListener('click', () => setTheme('light'));
-    btnDark .addEventListener('click', () => setTheme('dark'));
+
+    btnLight  .addEventListener('click', ()=> setTheme('light'));
+    btnDark   .addEventListener('click', ()=> setTheme('dark'));
+    btnStreets.addEventListener('click', ()=> setTheme('streets'));
 
     /************ Map ************/
     mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
       container: 'map',
-      style: STYLES[storedTheme],
+      style: STYLES[initialTheme],
       center: [-0.1276, 51.5072],
       zoom: 9
     });
@@ -180,9 +196,9 @@
     const propsCh  = ably.channels.get('props');
 
     /************ State + helpers ************/
-    const listPane    = document.getElementById('listPane'); // (declared ONCE)
-    const markersProp = new Map(); // propID -> Marker
-    const markersPOI  = new Map(); // UID   -> Marker
+    const listPane    = document.getElementById('listPane');
+    const markersProp = new Map();
+    const markersPOI  = new Map();
     let   currentProps = [];
 
     const escapeHtml = (s='') => String(s)
@@ -322,7 +338,6 @@
       marker.setLngLat([p.lon, p.lat]).setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'320px' }).setHTML(html)).addTo(map);
       markersProp.set(id, marker);
 
-      // marker ↔ list hover sync
       el.addEventListener('mouseenter', ()=> toggleCardHot(id, true));
       el.addEventListener('mouseleave', ()=> toggleCardHot(id, false));
     }
@@ -413,7 +428,7 @@
       fitToAllMarkers();
     });
 
-    /************ Initial load: show ALL properties ************/
+    /************ Initial load ************/
     async function bootstrap(){
       const props = await fetchAllProps();
       if (!props.length) { renderList([]); return; }
@@ -421,7 +436,6 @@
       props.forEach(drawProperty);
       renderList(props);
       fitToAllMarkers();
-      // (skip POIs on first load to avoid clutter)
     }
     bootstrap();
   </script>
