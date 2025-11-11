@@ -18,19 +18,12 @@
       --popup-text:#111827;
       --chip-bg:#f3f4f6;
       --chip-text:#111827;
-    }
-    /* Streets uses same palette as light (override later if you want) */
-    html[data-theme="streets"]{
-      --bg:#ffffff;
-      --text:#111827;
-      --muted:#6b7280;
-      --card:#ffffff;
-      --card-border:#e5e7eb;
-      --card-hover:#f6f9ff;
-      --popup-bg:#ffffff;
-      --popup-text:#111827;
-      --chip-bg:#f3f4f6;
-      --chip-text:#111827;
+      --accent:#2563eb; /* blue */
+      --accent-2:#a855f7; /* purple */
+      --ring-500: rgba(37,99,235,.10);
+      --ring-1000: rgba(37,99,235,.07);
+      --ring-2000: rgba(37,99,235,.05);
+      --ring-stroke:#2563eb;
     }
     html[data-theme="dark"]{
       --bg:#0b1220;
@@ -43,17 +36,24 @@
       --popup-text:#e5e7eb;
       --chip-bg:#1f2937;
       --chip-text:#e5e7eb;
+      --ring-500: rgba(59,130,246,.20);
+      --ring-1000: rgba(59,130,246,.14);
+      --ring-2000: rgba(59,130,246,.10);
+      --ring-stroke:#60a5fa;
     }
+    /* Streets uses same palette as light */
+    html[data-theme="streets"]{ }
 
     html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
     .wrap { display:flex; height:100vh; }
 
-    #botPane { width:28vw; min-width:320px; overflow:auto; }
+    #botPane { width:28vw; min-width:320px; overflow:auto; transition:width .18s ease; }
     #map     { flex:1; position:relative; }
     #listPane{
       width:25vw; min-width:300px; max-width:480px; overflow:auto;
-      border-left:1px solid var(--card-border); background:var(--bg);
+      border-left:1px solid var(--card-border); background:var(--bg); transition:width .18s ease;
     }
+    .collapsed{ display:none !important; }
 
     .topbar {
       position:absolute; right:12px; top:12px; z-index:2;
@@ -66,7 +66,11 @@
     .toggle { border:1px solid var(--card-border); border-radius:999px; padding:2px; display:inline-flex; gap:2px; background:var(--chip-bg); }
     .toggle button{ font-size:12px; border:0; padding:4px 8px; background:transparent; color:var(--chip-text); border-radius:999px; cursor:pointer; }
     .toggle button[aria-pressed="true"]{ background:var(--card); color:var(--text); }
+    .bars{ display:inline-flex; gap:4px; margin-left:4px; }
+    .bars button{ border:1px solid var(--card-border); background:var(--chip-bg); color:var(--chip-text); padding:4px 8px; border-radius:999px; cursor:pointer; }
+    .bars button:hover{ background:var(--card); color:var(--text); }
 
+    /* Markers */
     .pin{
       width:30px; height:30px; display:flex; align-items:center; justify-content:center;
       background:var(--card); border:1px solid var(--card-border);
@@ -77,6 +81,7 @@
     .pin--poi  { outline:2px solid #a855f722; }
     .pin.is-hot{ transform:scale(1.1); box-shadow:0 2px 10px rgba(37,99,235,.35); }
 
+    /* Cards */
     .card{
       background:var(--card); color:var(--text); margin:12px; padding:14px; border-radius:12px;
       box-shadow:0 1px 8px rgba(0,0,0,0.06);
@@ -92,9 +97,13 @@
       color:var(--text); opacity:.9; font-size:13px; margin-top:8px; line-height:1.35;
       display:-webkit-box; -webkit-line-clamp:5; line-clamp:5; -webkit-box-orient:vertical; overflow:hidden;
     }
+    .chips{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+    .chip{ display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:4px 8px; border-radius:999px; background:var(--chip-bg); color:var(--chip-text); border:1px solid var(--card-border); }
+    .chip b{ font-weight:600; }
     .link{ margin-top:8px; font-size:13px; }
     .empty{ color:var(--muted); font-size:13px; padding:14px; margin:12px; border:1px dashed var(--card-border); border-radius:10px; background:var(--card); }
 
+    /* Mapbox popups honor theme */
     .mapboxgl-popup-content{ background:var(--popup-bg) !important; color:var(--popup-text) !important; }
     .mapboxgl-popup-tip{ border-top-color:var(--popup-bg) !important; border-bottom-color:var(--popup-bg) !important; }
 
@@ -113,12 +122,17 @@
           <button id="btnDark"    type="button" aria-pressed="false">Dark</button>
           <button id="btnStreets" type="button" aria-pressed="false">Streets</button>
         </div>
+        <div class="bars" aria-label="Panels">
+          <button id="btnToggleBot"  type="button">Toggle Bot</button>
+          <button id="btnToggleList" type="button">Toggle List</button>
+        </div>
       </div>
     </div>
 
     <aside id="listPane"></aside>
   </div>
 
+  <!-- Libs -->
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
@@ -132,11 +146,10 @@
     const PEER_ABLY_KEY = '9hDZwQ.LMHMDw:rHPAP8YjEeVfa5-SYle5UBnVtGpIFpck8fO4YH42Gp0';
     const LANDBOT_CONFIG_URL = 'https://storage.googleapis.com/landbot.pro/v3/H-3134109-L1UF7O5PAQOKJEPB/index.json';
 
-    // Map styles
     const STYLES = {
       light:   'mapbox://styles/mapbox/light-v11',
       dark:    'mapbox://styles/mapbox/dark-v11',
-      streets: 'mapbox://styles/mapbox/streets-v12' // colored parks/water/roads
+      streets: 'mapbox://styles/mapbox/streets-v12'
     };
 
     /************ Session + bot ************/
@@ -155,6 +168,8 @@
     const btnLight   = document.getElementById('btnLight');
     const btnDark    = document.getElementById('btnDark');
     const btnStreets = document.getElementById('btnStreets');
+    const btnToggleBot  = document.getElementById('btnToggleBot');
+    const btnToggleList = document.getElementById('btnToggleList');
 
     const stored = localStorage.getItem('theme') || 'light';
     const initialTheme = (stored in STYLES) ? stored : 'light';
@@ -172,14 +187,20 @@
       document.documentElement.setAttribute('data-theme', t);
       reflectPressed(t);
       localStorage.setItem('theme', t);
-      if (!map.getStyle() || map.getStyle().sprite?.includes(t)) return;
+      if (map.getStyle()?.sprite?.includes(t)) return;
       map.setStyle(STYLES[t]);
-      map.once('style.load', ()=>{ /* DOM markers persist; no re-adding needed */ });
+      map.once('style.load', () => {
+        // Re-add proximity rings after style change
+        if (currentRingsGeo) addRingLayers(currentRingsGeo);
+      });
     }
-
-    btnLight  .addEventListener('click', ()=> setTheme('light'));
-    btnDark   .addEventListener('click', ()=> setTheme('dark'));
+    btnLight.addEventListener('click', ()=> setTheme('light'));
+    btnDark.addEventListener('click', ()=> setTheme('dark'));
     btnStreets.addEventListener('click', ()=> setTheme('streets'));
+
+    // Collapsible panes
+    btnToggleBot .addEventListener('click', () => document.getElementById('botPane').classList.toggle('collapsed'));
+    btnToggleList.addEventListener('click', () => document.getElementById('listPane').classList.toggle('collapsed'));
 
     /************ Map ************/
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -196,10 +217,11 @@
     const propsCh  = ably.channels.get('props');
 
     /************ State + helpers ************/
-    const listPane    = document.getElementById('listPane');
-    const markersProp = new Map();
-    const markersPOI  = new Map();
-    let   currentProps = [];
+    const listPane     = document.getElementById('listPane');
+    const markersProp  = new Map(); // propID -> Marker
+    const markersPOI   = new Map(); // UID   -> Marker
+    let   currentProps = [];        // full prop rows (with _amenities added)
+    let   currentRingsGeo = null;   // GeoJSON for proximity rings
 
     const escapeHtml = (s='') => String(s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -238,9 +260,18 @@
       return null;
     }
 
+    function metersBetween(a,b){
+      const R=6371000, toRad=d=>d*Math.PI/180;
+      const dLat=toRad(b.lat-a.lat), dLon=toRad(b.lon-a.lon);
+      const la1=toRad(a.lat), la2=toRad(b.lat);
+      const h=Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;
+      return 2*R*Math.asin(Math.sqrt(h));
+    }
+
     function clearAllMarkers(){
       for (const m of markersProp.values()) m.remove(); markersProp.clear();
       for (const m of markersPOI.values())  m.remove();  markersPOI.clear();
+      removeRings();
     }
 
     function fitToAllMarkers(pad=64){
@@ -294,32 +325,105 @@
       return out;
     }
 
-    async function fetchPOIsForProps(propIDs, { types=['cafe','bar','restaurant'], perTypeLimit=8 } = {}){
-      if (!propIDs?.length) return [];
+    // With centers provided, compute distance + filter; also return grouped counts per property
+    async function fetchPOIsForProps(propIDs, { types=['cafe','bar','restaurant','gym','park'], perTypeLimit=8, radiusMeters=800 } = {}, centersByProp = new Map()){
+      if (!propIDs?.length) return { list:[], counts:new Map() };
+
       const { data, error } = await supabase
         .from('Places_final')
         .select('UID, name, Address, type_single, propID')
         .in('propID', propIDs.map(String))
-        .limit(1000);
-      if (error) { console.error('[supabase] Places_final error', error); return []; }
+        .limit(2000);
+      if (error) { console.error('[supabase] Places_final error', error); return { list:[], counts:new Map() }; }
 
       const want = new Set(types.map(t => String(t).toLowerCase()));
-      const perType = new Map();
-      const out = [];
+      const perType = new Map(); // key: type -> used
+      const counts = new Map();  // key: propID -> {cafe: n, bar: n, restaurant: n, gym:n, park:n}
+      const list = [];
 
       for (const r of data){
         const t = String(r.type_single||'').toLowerCase();
         if (types.length && !want.has(t)) continue;
-        const used = perType.get(t) || 0;
-        if (used >= perTypeLimit) continue;
 
         const g = await geocodeAddress(r.Address);
         if (!g) continue;
 
-        out.push({ id:r.UID, name:r.name, address:r.Address, type:r.type_single, propID:r.propID, lat:g.lat, lon:g.lon });
-        perType.set(t, used+1);
+        // Distance filter (if we know center)
+        const center = centersByProp.get(String(r.propID));
+        const d = center ? metersBetween(center, g) : null;
+        if (center && d!=null && d > radiusMeters) continue;
+
+        // Counts per property (for chips)
+        const pid = String(r.propID);
+        if (!counts.has(pid)) counts.set(pid, { cafe:0, bar:0, restaurant:0, gym:0, park:0 });
+        const bucket = counts.get(pid);
+        if (t.includes('cafe') || t.includes('coffee')) bucket.cafe++;
+        else if (t.includes('bar') || t.includes('pub')) bucket.bar++;
+        else if (t.includes('restaurant') || t.includes('food')) bucket.restaurant++;
+        else if (t.includes('gym')) bucket.gym++;
+        else if (t.includes('park')) bucket.park++;
+
+        // Limit drawn POIs (per type) to keep the map clean
+        const used = perType.get(t) || 0;
+        if (used < perTypeLimit){
+          list.push({ id:r.UID, name:r.name, address:r.Address, type:r.type_single, propID:r.propID, lat:g.lat, lon:g.lon, _distance_m:d!=null?Math.round(d):null });
+          perType.set(t, used+1);
+        }
       }
-      return out;
+      // Sort by distance if available
+      list.sort((a,b)=> (a._distance_m??1e12) - (b._distance_m??1e12));
+      return { list, counts };
+    }
+
+    /************ Proximity rings ************/
+    function circlePolygon(lon, lat, radiusMeters, points=64){
+      const coords = [];
+      for (let i=0;i<=points;i++){
+        const bearing = (i/points) * 360;
+        const rad = radiusMeters / 6371000; // radians
+        const br = bearing * Math.PI/180;
+        const φ1 = lat * Math.PI/180;
+        const λ1 = lon * Math.PI/180;
+        const φ2 = Math.asin(Math.sin(φ1)*Math.cos(rad) + Math.cos(φ1)*Math.sin(rad)*Math.cos(br));
+        const λ2 = λ1 + Math.atan2(Math.sin(br)*Math.sin(rad)*Math.cos(φ1), Math.cos(rad)-Math.sin(φ1)*Math.sin(φ2));
+        coords.push([λ2*180/Math.PI, φ2*180/Math.PI]);
+      }
+      return { type:'Polygon', coordinates:[coords] };
+    }
+
+    function addRingLayers(geo){
+      const SRC='rings-src', FILL='rings-fill', LINE='rings-line';
+      if (map.getSource(SRC)) map.removeSource(SRC);
+      if (map.getLayer(FILL)) map.removeLayer(FILL);
+      if (map.getLayer(LINE)) map.removeLayer(LINE);
+
+      map.addSource(SRC, { type:'geojson', data: geo });
+      map.addLayer({ id:FILL, type:'fill', source:SRC, paint:{
+        'fill-color': ['match',['get','id'],
+          500, getComputedStyle(document.documentElement).getPropertyValue('--ring-500').trim(),
+          1000, getComputedStyle(document.documentElement).getPropertyValue('--ring-1000').trim(),
+          2000, getComputedStyle(document.documentElement).getPropertyValue('--ring-2000').trim(),
+          'rgba(37,99,235,0.08)'
+        ],
+        'fill-opacity': 1
+      }});
+      map.addLayer({ id:LINE, type:'line', source:SRC, paint:{
+        'line-color': getComputedStyle(document.documentElement).getPropertyValue('--ring-stroke').trim(),
+        'line-width': 1.2
+      }});
+    }
+    function removeRings(){
+      const SRC='rings-src', FILL='rings-fill', LINE='rings-line';
+      if (map.getLayer(LINE)) map.removeLayer(LINE);
+      if (map.getLayer(FILL)) map.removeLayer(FILL);
+      if (map.getSource(SRC)) map.removeSource(SRC);
+      currentRingsGeo = null;
+    }
+    function showRingsAt({lon,lat}){
+      const features = [500,1000,2000].map(r => ({ type:'Feature', properties:{ id:r }, geometry: circlePolygon(lon,lat,r) }));
+      const geo = { type:'FeatureCollection', features };
+      currentRingsGeo = geo;
+      addRingLayers(geo);
     }
 
     /************ Draw ************/
@@ -327,19 +431,25 @@
       const id = String(p.propID);
       const el = makePin('pin--prop','🏠');
       const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
+
+      const chips = p._amenities ? makeChipRow(p._amenities) : '';
       const html = `
         <div style="font-size:13px; line-height:1.35">
           <div style="font-weight:700">${escapeHtml(p.property||'')}</div>
           <div class="meta">${escapeHtml(p.city||'')}${p.owner ? ' · '+escapeHtml(p.owner) : ''}</div>
           ${p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : ''}
           ${p.property_description ? `<div class="desc">${escapeHtml(p.property_description)}</div>` : ''}
+          ${chips}
           ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
         </div>`;
+
       marker.setLngLat([p.lon, p.lat]).setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'320px' }).setHTML(html)).addTo(map);
       markersProp.set(id, marker);
 
+      // marker ↔ list hover sync
       el.addEventListener('mouseenter', ()=> toggleCardHot(id, true));
       el.addEventListener('mouseleave', ()=> toggleCardHot(id, false));
+      el.addEventListener('click', ()=> { showRingsAt({lon:p.lon, lat:p.lat}); });
     }
 
     function drawPOI(r){
@@ -358,6 +468,16 @@
       markersPOI.set(id, m);
     }
 
+    function makeChipRow(a){
+      const bits = [];
+      if (a.cafe)       bits.push(`<span class="chip">☕ <b>${a.cafe}</b></span>`);
+      if (a.bar)        bits.push(`<span class="chip">🍺 <b>${a.bar}</b></span>`);
+      if (a.restaurant) bits.push(`<span class="chip">🍽️ <b>${a.restaurant}</b></span>`);
+      if (a.gym)        bits.push(`<span class="chip">💪 <b>${a.gym}</b></span>`);
+      if (a.park)       bits.push(`<span class="chip">🌳 <b>${a.park}</b></span>`);
+      return bits.length ? `<div class="chips">${bits.join('')}</div>` : '';
+    }
+
     /************ Shortlist UI ************/
     function renderList(props){
       currentProps = props;
@@ -371,6 +491,7 @@
           <div class="meta">${escapeHtml(p.city||'')}${p.owner ? ' · ' + escapeHtml(p.owner) : ''}</div>
           ${p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : ''}
           ${p.property_description ? `<div class="desc">${escapeHtml(p.property_description)}</div>` : ''}
+          ${p._amenities ? makeChipRow(p._amenities) : ''}
           ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
         </article>
       `).join('');
@@ -394,11 +515,12 @@
       card.classList.toggle('is-active', !!on);
     }
     function focusProperty(id){
-      const m = markersProp.get(String(id));
       const row = currentProps.find(r => String(r.propID) === String(id));
+      const m = markersProp.get(String(id));
       if (!m || !row) return;
       map.flyTo({ center:[row.lon,row.lat], zoom:14, duration:600 });
       setTimeout(()=> m.togglePopup(), 650);
+      showRingsAt({lon:row.lon, lat:row.lat});
     }
 
     /************ Ably subscription ************/
@@ -418,10 +540,18 @@
 
       clearAllMarkers();
 
+      // Properties
       const props = await fetchPropsByIds(ids);
-      props.forEach(drawProperty);
 
-      const pois  = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant'], perTypeLimit:8 });
+      // Build centers map for distance & chips
+      const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
+      const { list: pois, counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:8, radiusMeters:800 }, centers);
+
+      // attach amenity counts to props
+      props.forEach(p => { p._amenities = counts.get(String(p.propID)) || null; });
+
+      // draw
+      props.forEach(drawProperty);
       pois.forEach(drawPOI);
 
       renderList(props);
@@ -432,12 +562,19 @@
     async function bootstrap(){
       const props = await fetchAllProps();
       if (!props.length) { renderList([]); return; }
+
+      // For initial list chips, compute counts too (no POIs drawn to reduce clutter)
+      const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
+      const ids = props.map(p => String(p.propID));
+      const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
+      props.forEach(p => { p._amenities = counts.get(String(p.propID)) || null; });
+
       clearAllMarkers();
       props.forEach(drawProperty);
       renderList(props);
       fitToAllMarkers();
     }
-    bootstrap();
+    map.once('load', bootstrap);
   </script>
 </body>
 </html>
