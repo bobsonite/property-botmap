@@ -211,7 +211,7 @@
     const listPane     = document.getElementById('listPane');
     const markersProp  = new Map(); // propID -> Marker
     const markersPOI   = new Map(); // UID   -> Marker
-    let   currentProps = [];        // props with _amenities
+    let   currentProps = [];        // props with _amenityCounts + _amenServIcons
     let   currentRingsGeo = null;   // FeatureCollection for polygons + labels
     let   hideRingsTimer = null;
 
@@ -229,6 +229,27 @@
       if (x.includes('park')) return '🌳';
       return '📍';
     };
+
+    // Amenity/Service → icon mapper
+    function emojiForAmenityOrService(label=''){
+      const s = String(label).toLowerCase();
+      if (/\b(cctv|security|secure|key fob|keycard|access control)\b/.test(s)) return '🛡️';
+      if (/\b(24.?hour|24\/7|reception|on.?site team|maintenance)\b/.test(s)) return '👥';
+      if (/\b(wifi|wi[- ]?fi|internet|broadband|high[- ]?speed)\b/.test(s))    return '📶';
+      if (/\b(utility|utilities|bills|electricity|gas|water)\b/.test(s))       return '💡';
+      if (/\b(laundry|washer|dryer)\b/.test(s))                                 return '🧺';
+      if (/\b(bike|cycle|bicycle)\b/.test(s))                                   return '🚲';
+      if (/\b(parking|car|garage|charge)\b/.test(s))                            return '🅿️';
+      if (/\b(gym|fitness|yoga|wellness)\b/.test(s))                             return '💪';
+      if (/\b(cinema|movie|tv lounge|karaoke|games?)\b/.test(s))                return '🎬';
+      if (/\b(study|desk|library|booth|hub)\b/.test(s))                          return '📚';
+      if (/\b(roof|terrace|sky lounge|garden|courtyard|outdoor)\b/.test(s))     return '🌿';
+      if (/\b(accessible|wheelchair|access ramp|lift|elevator)\b/.test(s))      return '♿';
+      if (/\b(air.?con(ditioning)?|ac)\b/.test(s))                               return '❄️';
+      if (/\b(dining|kitchen|hosting)\b/.test(s))                                return '🍽️';
+      if (/\b(insurance|howden)\b/.test(s))                                      return '🧾';
+      return '🏷️';
+    }
 
     const makePin = (cls, text) => {
       const el = document.createElement('div');
@@ -362,6 +383,74 @@
       return { list, counts };
     }
 
+    // NEW: fetch amenities + services icons per property
+    async function fetchAmenAndServices(propIDs){
+      const ids = (propIDs||[]).map(String);
+      const byProp = new Map(ids.map(id => [id, { amen:[], serv:[] }]));
+
+      // amenities
+      {
+        const { data, error } = await supabase
+          .from('amenities')
+          .select('property_id, propid, Amenity')
+          .in('property_id', ids)
+          .limit(5000);
+        if (error || !data?.length){
+          const r2 = await supabase
+            .from('amenities')
+            .select('propid, Amenity')
+            .in('propid', ids)
+            .limit(5000);
+          if (!r2.error && r2.data){
+            for (const r of r2.data){
+              const pid = String(r.propid);
+              if (byProp.has(pid)) byProp.get(pid).amen.push(String(r.Amenity||''));
+            }
+          }
+        } else {
+          for (const r of data){
+            const pid = String(r.property_id ?? r.propid ?? '');
+            if (byProp.has(pid)) byProp.get(pid).amen.push(String(r.Amenity||''));
+          }
+        }
+      }
+
+      // services
+      {
+        const { data, error } = await supabase
+          .from('services')
+          .select('property_id, propid, service')
+          .in('property_id', ids)
+          .limit(5000);
+        if (error || !data?.length){
+          const r2 = await supabase
+            .from('services')
+            .select('propid, service')
+            .in('propid', ids)
+            .limit(5000);
+          if (!r2.error && r2.data){
+            for (const r of r2.data){
+              const pid = String(r.propid);
+              if (byProp.has(pid)) byProp.get(pid).serv.push(String(r.service||''));
+            }
+          }
+        } else {
+          for (const r of data){
+            const pid = String(r.property_id ?? r.propid ?? '');
+            if (byProp.has(pid)) byProp.get(pid).serv.push(String(r.service||''));
+          }
+        }
+      }
+
+      const result = new Map();
+      for (const [pid, {amen, serv}] of byProp.entries()){
+        const amenIcons = [...new Set(amen.map(emojiForAmenityOrService))];
+        const servIcons = [...new Set(serv.map(emojiForAmenityOrService))];
+        result.set(pid, { amenIcons, servIcons });
+      }
+      return result;
+    }
+
     /************ Proximity rings (+ labels) ************/
     function destPoint(lon,lat,distMeters,bearingDeg){
       const R=6371000, br=bearingDeg*Math.PI/180, φ1=lat*Math.PI/180, λ1=lon*Math.PI/180, d=distMeters/R;
@@ -383,7 +472,7 @@
       const features=[];
       for (const r of radii){
         features.push({ type:'Feature', properties:{ kind:'ring', id:r }, geometry: circlePolygon(lon,lat,r) });
-        const [lx,ly] = destPoint(lon,lat,r,95); // label a touch to the east
+        const [lx,ly] = destPoint(lon,lat,r,95);
         const mins = minsForRadius(r);
         features.push({ type:'Feature', properties:{ kind:'label', id:r, text:`≈${mins} min walk` }, geometry:{ type:'Point', coordinates:[lx,ly] } });
       }
@@ -447,14 +536,15 @@
       const el = makePin('pin--prop','🏠');
       const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
 
-      const chips = p._amenities ? makeChipRow(p._amenities) : '';
+      const chipsPOI = p._amenityCounts ? makeChipRow(p._amenityCounts) : '';
+      const chipsAS  = p._amenServIcons ? makeAmenityServiceRow(p._amenServIcons) : '';
       const html = `
         <div style="font-size:13px; line-height:1.35">
           <div style="font-weight:700">${escapeHtml(p.property||'')}</div>
           <div class="meta">${escapeHtml(p.city||'')}${p.owner ? ' · '+escapeHtml(p.owner) : ''}</div>
           ${p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : ''}
           ${p.property_description ? `<div class="desc">${escapeHtml(p.property_description)}</div>` : ''}
-          ${chips}
+          ${chipsPOI}${chipsAS}
           ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
         </div>`;
 
@@ -465,7 +555,6 @@
 
       markersProp.set(id, marker);
 
-      // Hover → rings + highlight
       el.addEventListener('mouseenter', ()=> { toggleCardHot(id, true);  showRingsAt({lon:p.lon, lat:p.lat}); });
       el.addEventListener('mouseleave', ()=> { toggleCardHot(id, false); scheduleHideRings(); });
     }
@@ -496,6 +585,14 @@
       return bits.length ? `<div class="chips">${bits.join('')}</div>` : '';
     }
 
+    // NEW: render amenities/services icon row (up to N icons)
+    function makeAmenityServiceRow({ amenIcons=[], servIcons=[] } = {}, maxTotal=8){
+      const icons = [...amenIcons, ...servIcons].slice(0, maxTotal);
+      if (!icons.length) return '';
+      const html = icons.map(ic => `<span class="chip">${ic}</span>`).join('');
+      return `<div class="chips">${html}</div>`;
+    }
+
     /************ Shortlist UI ************/
     function renderList(props){
       currentProps = props;
@@ -509,7 +606,8 @@
           <div class="meta">${escapeHtml(p.city||'')}${p.owner ? ' · ' + escapeHtml(p.owner) : ''}</div>
           ${p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : ''}
           ${p.property_description ? `<div class="desc">${escapeHtml(p.property_description)}</div>` : ''}
-          ${p._amenities ? makeChipRow(p._amenities) : ''}
+          ${p._amenityCounts ? makeChipRow(p._amenityCounts) : ''}
+          ${p._amenServIcons ? makeAmenityServiceRow(p._amenServIcons) : ''}
           ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
         </article>
       `).join('');
@@ -567,7 +665,14 @@
       const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
       const { list: pois, counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:8, radiusMeters:800 }, centers);
 
-      props.forEach(p => { p._amenities = counts.get(String(p.propID)) || null; });
+      // NEW: amenities & services icons
+      const amenServ = await fetchAmenAndServices(ids);
+
+      props.forEach(p => {
+        const pid = String(p.propID);
+        p._amenityCounts = counts.get(pid) || null;
+        p._amenServIcons = amenServ.get(pid) || { amenIcons:[], servIcons:[] };
+      });
 
       props.forEach(drawProperty);
       pois.forEach(drawPOI);
@@ -583,8 +688,15 @@
 
       const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
       const ids = props.map(p => String(p.propID));
+
       const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
-      props.forEach(p => { p._amenities = counts.get(String(p.propID)) || null; });
+      const amenServ = await fetchAmenAndServices(ids);
+
+      props.forEach(p => {
+        const pid = String(p.propID);
+        p._amenityCounts = counts.get(pid) || null;
+        p._amenServIcons = amenServ.get(pid) || { amenIcons:[], servIcons:[] };
+      });
 
       clearAllMarkers();
       props.forEach(drawProperty);
