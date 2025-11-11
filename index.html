@@ -18,12 +18,16 @@
       --popup-text:#111827;
       --chip-bg:#f3f4f6;
       --chip-text:#111827;
-      --accent:#2563eb; /* blue */
-      --accent-2:#a855f7; /* purple */
+      --accent:#2563eb;
+      --accent-2:#a855f7;
+
+      /* Rings */
       --ring-500: rgba(37,99,235,.10);
       --ring-1000: rgba(37,99,235,.07);
       --ring-2000: rgba(37,99,235,.05);
       --ring-stroke:#2563eb;
+      --ring-label:#1f2937;
+      --ring-halo:#ffffff;
     }
     html[data-theme="dark"]{
       --bg:#0b1220;
@@ -36,24 +40,25 @@
       --popup-text:#e5e7eb;
       --chip-bg:#1f2937;
       --chip-text:#e5e7eb;
+
       --ring-500: rgba(59,130,246,.20);
       --ring-1000: rgba(59,130,246,.14);
       --ring-2000: rgba(59,130,246,.10);
       --ring-stroke:#60a5fa;
+      --ring-label:#e5e7eb;
+      --ring-halo:#0b1220;
     }
-    /* Streets uses same palette as light */
-    html[data-theme="streets"]{ }
+    html[data-theme="streets"]{ /* same palette as light */ }
 
     html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
     .wrap { display:flex; height:100vh; }
 
-    #botPane { width:28vw; min-width:320px; overflow:auto; transition:width .18s ease; }
+    #botPane { width:28vw; min-width:320px; overflow:auto; }
     #map     { flex:1; position:relative; }
     #listPane{
       width:25vw; min-width:300px; max-width:480px; overflow:auto;
-      border-left:1px solid var(--card-border); background:var(--bg); transition:width .18s ease;
+      border-left:1px solid var(--card-border); background:var(--bg);
     }
-    .collapsed{ display:none !important; }
 
     .topbar {
       position:absolute; right:12px; top:12px; z-index:2;
@@ -66,9 +71,6 @@
     .toggle { border:1px solid var(--card-border); border-radius:999px; padding:2px; display:inline-flex; gap:2px; background:var(--chip-bg); }
     .toggle button{ font-size:12px; border:0; padding:4px 8px; background:transparent; color:var(--chip-text); border-radius:999px; cursor:pointer; }
     .toggle button[aria-pressed="true"]{ background:var(--card); color:var(--text); }
-    .bars{ display:inline-flex; gap:4px; margin-left:4px; }
-    .bars button{ border:1px solid var(--card-border); background:var(--chip-bg); color:var(--chip-text); padding:4px 8px; border-radius:999px; cursor:pointer; }
-    .bars button:hover{ background:var(--card); color:var(--text); }
 
     /* Markers */
     .pin{
@@ -122,10 +124,6 @@
           <button id="btnDark"    type="button" aria-pressed="false">Dark</button>
           <button id="btnStreets" type="button" aria-pressed="false">Streets</button>
         </div>
-        <div class="bars" aria-label="Panels">
-          <button id="btnToggleBot"  type="button">Toggle Bot</button>
-          <button id="btnToggleList" type="button">Toggle List</button>
-        </div>
       </div>
     </div>
 
@@ -168,8 +166,6 @@
     const btnLight   = document.getElementById('btnLight');
     const btnDark    = document.getElementById('btnDark');
     const btnStreets = document.getElementById('btnStreets');
-    const btnToggleBot  = document.getElementById('btnToggleBot');
-    const btnToggleList = document.getElementById('btnToggleList');
 
     const stored = localStorage.getItem('theme') || 'light';
     const initialTheme = (stored in STYLES) ? stored : 'light';
@@ -190,17 +186,12 @@
       if (map.getStyle()?.sprite?.includes(t)) return;
       map.setStyle(STYLES[t]);
       map.once('style.load', () => {
-        // Re-add proximity rings after style change
-        if (currentRingsGeo) addRingLayers(currentRingsGeo);
+        if (currentRingsGeo) addRingLayers(currentRingsGeo); // restore rings + labels after style change
       });
     }
-    btnLight.addEventListener('click', ()=> setTheme('light'));
-    btnDark.addEventListener('click', ()=> setTheme('dark'));
+    btnLight  .addEventListener('click', ()=> setTheme('light'));
+    btnDark   .addEventListener('click', ()=> setTheme('dark'));
     btnStreets.addEventListener('click', ()=> setTheme('streets'));
-
-    // Collapsible panes
-    btnToggleBot .addEventListener('click', () => document.getElementById('botPane').classList.toggle('collapsed'));
-    btnToggleList.addEventListener('click', () => document.getElementById('listPane').classList.toggle('collapsed'));
 
     /************ Map ************/
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -220,8 +211,9 @@
     const listPane     = document.getElementById('listPane');
     const markersProp  = new Map(); // propID -> Marker
     const markersPOI   = new Map(); // UID   -> Marker
-    let   currentProps = [];        // full prop rows (with _amenities added)
-    let   currentRingsGeo = null;   // GeoJSON for proximity rings
+    let   currentProps = [];        // props with _amenities
+    let   currentRingsGeo = null;   // FeatureCollection for polygons + labels
+    let   hideRingsTimer = null;
 
     const escapeHtml = (s='') => String(s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -325,7 +317,6 @@
       return out;
     }
 
-    // With centers provided, compute distance + filter; also return grouped counts per property
     async function fetchPOIsForProps(propIDs, { types=['cafe','bar','restaurant','gym','park'], perTypeLimit=8, radiusMeters=800 } = {}, centersByProp = new Map()){
       if (!propIDs?.length) return { list:[], counts:new Map() };
 
@@ -337,8 +328,8 @@
       if (error) { console.error('[supabase] Places_final error', error); return { list:[], counts:new Map() }; }
 
       const want = new Set(types.map(t => String(t).toLowerCase()));
-      const perType = new Map(); // key: type -> used
-      const counts = new Map();  // key: propID -> {cafe: n, bar: n, restaurant: n, gym:n, park:n}
+      const perType = new Map();
+      const counts = new Map();
       const list = [];
 
       for (const r of data){
@@ -348,12 +339,10 @@
         const g = await geocodeAddress(r.Address);
         if (!g) continue;
 
-        // Distance filter (if we know center)
         const center = centersByProp.get(String(r.propID));
         const d = center ? metersBetween(center, g) : null;
         if (center && d!=null && d > radiusMeters) continue;
 
-        // Counts per property (for chips)
         const pid = String(r.propID);
         if (!counts.has(pid)) counts.set(pid, { cafe:0, bar:0, restaurant:0, gym:0, park:0 });
         const bucket = counts.get(pid);
@@ -363,42 +352,53 @@
         else if (t.includes('gym')) bucket.gym++;
         else if (t.includes('park')) bucket.park++;
 
-        // Limit drawn POIs (per type) to keep the map clean
         const used = perType.get(t) || 0;
         if (used < perTypeLimit){
           list.push({ id:r.UID, name:r.name, address:r.Address, type:r.type_single, propID:r.propID, lat:g.lat, lon:g.lon, _distance_m:d!=null?Math.round(d):null });
           perType.set(t, used+1);
         }
       }
-      // Sort by distance if available
       list.sort((a,b)=> (a._distance_m??1e12) - (b._distance_m??1e12));
       return { list, counts };
     }
 
-    /************ Proximity rings ************/
+    /************ Proximity rings (+ labels) ************/
+    function destPoint(lon,lat,distMeters,bearingDeg){
+      const R=6371000, br=bearingDeg*Math.PI/180, φ1=lat*Math.PI/180, λ1=lon*Math.PI/180, d=distMeters/R;
+      const φ2=Math.asin(Math.sin(φ1)*Math.cos(d)+Math.cos(φ1)*Math.sin(d)*Math.cos(br));
+      const λ2=λ1+Math.atan2(Math.sin(br)*Math.sin(d)*Math.cos(φ1),Math.cos(d)-Math.sin(φ1)*Math.sin(φ2));
+      return [λ2*180/Math.PI, φ2*180/Math.PI];
+    }
     function circlePolygon(lon, lat, radiusMeters, points=64){
       const coords = [];
       for (let i=0;i<=points;i++){
-        const bearing = (i/points) * 360;
-        const rad = radiusMeters / 6371000; // radians
-        const br = bearing * Math.PI/180;
-        const φ1 = lat * Math.PI/180;
-        const λ1 = lon * Math.PI/180;
-        const φ2 = Math.asin(Math.sin(φ1)*Math.cos(rad) + Math.cos(φ1)*Math.sin(rad)*Math.cos(br));
-        const λ2 = λ1 + Math.atan2(Math.sin(br)*Math.sin(rad)*Math.cos(φ1), Math.cos(rad)-Math.sin(φ1)*Math.sin(φ2));
-        coords.push([λ2*180/Math.PI, φ2*180/Math.PI]);
+        const br = (i/points)*360;
+        coords.push(destPoint(lon,lat,radiusMeters,br));
       }
       return { type:'Polygon', coordinates:[coords] };
     }
-
+    function minsForRadius(r){ return Math.round(r/80); } // ~80 m/min ≈ 5 km/h
+    function ringsGeo(lon,lat){
+      const radii=[500,1000,2000];
+      const features=[];
+      for (const r of radii){
+        features.push({ type:'Feature', properties:{ kind:'ring', id:r }, geometry: circlePolygon(lon,lat,r) });
+        const [lx,ly] = destPoint(lon,lat,r,95); // label a touch to the east
+        const mins = minsForRadius(r);
+        features.push({ type:'Feature', properties:{ kind:'label', id:r, text:`≈${mins} min walk` }, geometry:{ type:'Point', coordinates:[lx,ly] } });
+      }
+      return { type:'FeatureCollection', features };
+    }
     function addRingLayers(geo){
-      const SRC='rings-src', FILL='rings-fill', LINE='rings-line';
-      if (map.getSource(SRC)) map.removeSource(SRC);
-      if (map.getLayer(FILL)) map.removeLayer(FILL);
+      const SRC='rings-src', FILL='rings-fill', LINE='rings-line', LBL='rings-lbl';
+      if (map.getLayer(LBL)) map.removeLayer(LBL);
       if (map.getLayer(LINE)) map.removeLayer(LINE);
+      if (map.getLayer(FILL)) map.removeLayer(FILL);
+      if (map.getSource(SRC)) map.removeSource(SRC);
 
       map.addSource(SRC, { type:'geojson', data: geo });
-      map.addLayer({ id:FILL, type:'fill', source:SRC, paint:{
+
+      map.addLayer({ id:FILL, type:'fill', source:SRC, filter:['==',['get','kind'],'ring'], paint:{
         'fill-color': ['match',['get','id'],
           500, getComputedStyle(document.documentElement).getPropertyValue('--ring-500').trim(),
           1000, getComputedStyle(document.documentElement).getPropertyValue('--ring-1000').trim(),
@@ -407,23 +407,38 @@
         ],
         'fill-opacity': 1
       }});
-      map.addLayer({ id:LINE, type:'line', source:SRC, paint:{
+      map.addLayer({ id:LINE, type:'line', source:SRC, filter:['==',['get','kind'],'ring'], paint:{
         'line-color': getComputedStyle(document.documentElement).getPropertyValue('--ring-stroke').trim(),
         'line-width': 1.2
       }});
+      map.addLayer({ id:LBL, type:'symbol', source:SRC, filter:['==',['get','kind'],'label'], layout:{
+        'text-field': ['get','text'],
+        'text-font': ['Inter Medium','Open Sans Semibold','Arial Unicode MS Bold'],
+        'text-size': 12,
+        'text-offset': [0,0]
+      }, paint:{
+        'text-color': getComputedStyle(document.documentElement).getPropertyValue('--ring-label').trim(),
+        'text-halo-color': getComputedStyle(document.documentElement).getPropertyValue('--ring-halo').trim(),
+        'text-halo-width': 1.2
+      }});
     }
     function removeRings(){
-      const SRC='rings-src', FILL='rings-fill', LINE='rings-line';
+      const SRC='rings-src', FILL='rings-fill', LINE='rings-line', LBL='rings-lbl';
+      if (map.getLayer(LBL))  map.removeLayer(LBL);
       if (map.getLayer(LINE)) map.removeLayer(LINE);
       if (map.getLayer(FILL)) map.removeLayer(FILL);
       if (map.getSource(SRC)) map.removeSource(SRC);
       currentRingsGeo = null;
     }
     function showRingsAt({lon,lat}){
-      const features = [500,1000,2000].map(r => ({ type:'Feature', properties:{ id:r }, geometry: circlePolygon(lon,lat,r) }));
-      const geo = { type:'FeatureCollection', features };
+      clearTimeout(hideRingsTimer);
+      const geo = ringsGeo(lon,lat);
       currentRingsGeo = geo;
       addRingLayers(geo);
+    }
+    function scheduleHideRings(){
+      clearTimeout(hideRingsTimer);
+      hideRingsTimer = setTimeout(removeRings, 180);
     }
 
     /************ Draw ************/
@@ -443,13 +458,16 @@
           ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
         </div>`;
 
-      marker.setLngLat([p.lon, p.lat]).setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'320px' }).setHTML(html)).addTo(map);
+      marker
+        .setLngLat([p.lon, p.lat])
+        .setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'320px' }).setHTML(html))
+        .addTo(map);
+
       markersProp.set(id, marker);
 
-      // marker ↔ list hover sync
-      el.addEventListener('mouseenter', ()=> toggleCardHot(id, true));
-      el.addEventListener('mouseleave', ()=> toggleCardHot(id, false));
-      el.addEventListener('click', ()=> { showRingsAt({lon:p.lon, lat:p.lat}); });
+      // Hover → rings + highlight
+      el.addEventListener('mouseenter', ()=> { toggleCardHot(id, true);  showRingsAt({lon:p.lon, lat:p.lat}); });
+      el.addEventListener('mouseleave', ()=> { toggleCardHot(id, false); scheduleHideRings(); });
     }
 
     function drawPOI(r){
@@ -498,9 +516,22 @@
 
       listPane.querySelectorAll('.card').forEach(card => {
         const id = card.getAttribute('data-id');
-        card.addEventListener('mouseenter', ()=> toggleMarkerHot(id, true));
-        card.addEventListener('mouseleave', ()=> toggleMarkerHot(id, false));
-        card.addEventListener('click',     ()=> focusProperty(id));
+        const row = () => currentProps.find(r => String(r.propID)===String(id));
+        card.addEventListener('mouseenter', ()=> {
+          const r = row(); if (!r) return;
+          toggleMarkerHot(id, true);
+          showRingsAt({lon:r.lon, lat:r.lat});
+        });
+        card.addEventListener('mouseleave', ()=> {
+          toggleMarkerHot(id, false);
+          scheduleHideRings();
+        });
+        card.addEventListener('click', ()=> {
+          const r = row(); const m = markersProp.get(String(id));
+          if (!m || !r) return;
+          map.flyTo({ center:[r.lon,r.lat], zoom:14, duration:600 });
+          setTimeout(()=> m.togglePopup(), 650);
+        });
       });
     }
 
@@ -513,14 +544,6 @@
       const card = listPane.querySelector(`.card[data-id="${CSS.escape(String(id))}"]`);
       if (!card) return;
       card.classList.toggle('is-active', !!on);
-    }
-    function focusProperty(id){
-      const row = currentProps.find(r => String(r.propID) === String(id));
-      const m = markersProp.get(String(id));
-      if (!m || !row) return;
-      map.flyTo({ center:[row.lon,row.lat], zoom:14, duration:600 });
-      setTimeout(()=> m.togglePopup(), 650);
-      showRingsAt({lon:row.lon, lat:row.lat});
     }
 
     /************ Ably subscription ************/
@@ -540,17 +563,12 @@
 
       clearAllMarkers();
 
-      // Properties
       const props = await fetchPropsByIds(ids);
-
-      // Build centers map for distance & chips
       const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
       const { list: pois, counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:8, radiusMeters:800 }, centers);
 
-      // attach amenity counts to props
       props.forEach(p => { p._amenities = counts.get(String(p.propID)) || null; });
 
-      // draw
       props.forEach(drawProperty);
       pois.forEach(drawPOI);
 
@@ -563,7 +581,6 @@
       const props = await fetchAllProps();
       if (!props.length) { renderList([]); return; }
 
-      // For initial list chips, compute counts too (no POIs drawn to reduce clutter)
       const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
       const ids = props.map(p => String(p.propID));
       const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
