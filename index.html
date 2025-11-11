@@ -3,78 +3,95 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Student Housing — Bot + Map (Dark)</title>
+  <title>Student Housing — Bot + Map</title>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <style>
+    /* THEME: variables */
     :root{
-      --bg:#0b0f19;           /* page background */
-      --panel:#0f1115;        /* side panels */
-      --card:#151823;         /* cards */
+      /* Light defaults */
+      --bg:#ffffff;
+      --panel:#fafafa;
+      --card:#ffffff;
+      --card-hover:#f6f9ff;
+      --border:#e6e6e6;
+      --text:#0f172a;
+      --muted:#6b7280;
+      --accent:#2563eb; /* property border */
+      --poi:#a855f7;    /* poi border */
+      --shadow:0 1px 8px rgba(0,0,0,.06);
+      --pill-bg:#f2f4f7;
+      --link:#2563eb;
+      --popup-tip:var(--card);
+      --map-style: mapbox://styles/mapbox/light-v11; /* used by JS via data attr */
+    }
+    body.theme-dark{
+      --bg:#0b0f19;
+      --panel:#0f1115;
+      --card:#151823;
       --card-hover:#1a1f2d;
       --border:#2a3344;
-      --text:#e5e7eb;         /* main text */
-      --muted:#9aa4b2;        /* secondary text */
-      --accent:#60a5fa;       /* property blue */
-      --poi:#c084fc;          /* poi purple */
+      --text:#e5e7eb;
+      --muted:#9aa4b2;
+      --accent:#60a5fa;
+      --poi:#c084fc;
       --shadow:0 1px 10px rgba(0,0,0,.35);
+      --pill-bg:#0e141f;
+      --link:#93c5fd;
+      --popup-tip:var(--card);
+      --map-style: mapbox://styles/mapbox/dark-v11;
     }
 
+    /* Layout */
     html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
     .wrap { display:flex; height:100vh; }
-
-    /* Left bot, center map, right shortlist */
     #botPane { width:28vw; min-width:320px; overflow:auto; background:var(--panel); border-right:1px solid var(--border); }
     #map     { flex:1; position:relative; }
-    #listPane{
-      width:25vw; min-width:300px; max-width:480px; overflow:auto;
-      border-left:1px solid var(--border); background:var(--panel);
-    }
+    #listPane{ width:25vw; min-width:300px; max-width:480px; overflow:auto; border-left:1px solid var(--border); background:var(--panel); }
+    @media (max-width: 980px){ #listPane{ display:none; } }
 
-    .topbar { position:absolute; right:12px; top:12px; background:var(--card); padding:8px 10px; border-radius:10px;
-              box-shadow:var(--shadow); z-index:2; font-size:12px; border:1px solid var(--border); color:var(--muted); }
-    .pill { display:inline-block; background:#0e141f; padding:2px 8px; border-radius:999px; margin-left:6px; color:var(--text); border:1px solid var(--border); }
+    /* Topbar */
+    .topbar { position:absolute; right:12px; top:12px; background:var(--card); padding:8px 10px; border-radius:12px; box-shadow:var(--shadow); z-index:3; font-size:12px; border:1px solid var(--border); color:var(--muted); display:flex; gap:8px; align-items:center;}
+    .pill { display:inline-block; background:var(--pill-bg); padding:2px 8px; border-radius:999px; color:var(--text); border:1px solid var(--border); }
+    .btn { border:1px solid var(--border); background:var(--card); color:var(--text); border-radius:999px; padding:6px 10px; font-size:12px; cursor:pointer; box-shadow:var(--shadow); }
+    .btn:hover{ background:var(--card-hover); }
 
-    /* Mapbox popups → dark */
+    /* Mapbox popup → themed */
     .mapboxgl-popup-content{ background:var(--card); color:var(--text); border:1px solid var(--border); box-shadow:var(--shadow); }
     .mapboxgl-popup-close-button{ color:var(--muted); }
-    .mapboxgl-popup-tip{ border-top-color:var(--card) !important; border-bottom-color:var(--card) !important; border-left-color:var(--card) !important; border-right-color:var(--card) !important; }
+    .mapboxgl-popup-tip{ border-top-color:var(--popup-tip) !important; border-bottom-color:var(--popup-tip) !important; border-left-color:var(--popup-tip) !important; border-right-color:var(--popup-tip) !important; }
 
     /* Markers */
-    .pin {
-      width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-      font-size:18px; background:#0f172a; color:#fff; border:1px solid var(--border); box-shadow:var(--shadow);
-    }
+    .pin { width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; background:#0f172a; color:#fff; border:1px solid var(--border); box-shadow:var(--shadow); }
+    body:not(.theme-dark) .pin{ background:#ffffff; color:#111827; } /* lighter face in light mode */
     .pin--prop { border-color:var(--accent); }
     .pin--poi  { border-color:var(--poi); }
     .pin.is-hot { transform:scale(1.1); box-shadow:0 2px 16px rgba(96,165,250,.35); }
 
     /* Shortlist cards */
-    .card{
-      background:var(--card); margin:12px; padding:14px; border-radius:12px;
-      box-shadow:var(--shadow); transition:transform .12s ease, background .12s ease, border-color .12s ease;
-      border:1px solid var(--border); cursor:pointer;
-    }
+    .card{ background:var(--card); margin:12px; padding:14px; border-radius:12px; box-shadow:var(--shadow); transition:transform .12s ease, background .12s ease, border-color .12s ease; border:1px solid var(--border); cursor:pointer; }
     .card:hover{ transform:translateY(-1px); background:var(--card-hover); }
     .card.is-active{ outline:2px solid #2563eb33; background:var(--card-hover); }
     .card h3{ margin:0 0 4px; font-size:15px; color:var(--text); }
     .meta{ color:var(--muted); font-size:12px; }
     .addr{ color:var(--muted); font-size:12px; margin-top:6px; }
     .desc{
-      color:#cdd6e3; font-size:13px; margin-top:8px; line-height:1.35;
+      color:inherit; opacity:.9; font-size:13px; margin-top:8px; line-height:1.35;
       display:-webkit-box; -webkit-line-clamp:5; line-clamp:5; -webkit-box-orient:vertical; overflow:hidden;
     }
     .link{ margin-top:8px; font-size:13px; }
-    .link a{ color:#93c5fd; text-decoration:none; }
+    .link a{ color:var(--link); text-decoration:none; }
     .link a:hover{ text-decoration:underline; }
     .empty{ color:var(--muted); font-size:13px; padding:14px; margin:12px; border:1px dashed var(--border); border-radius:10px; background:var(--card); }
-    @media (max-width: 980px){ #listPane{ display:none; } } /* collapse shortlist on small screens */
   </style>
 </head>
 <body>
   <div class="wrap">
     <div id="botPane" title="Student Bot"></div>
     <div id="map">
-      <div class="topbar">session_id: <span id="sid" class="pill"></span></div>
+      <div class="topbar">
+        session_id: <span id="sid" class="pill"></span>
+        <button id="themeBtn" class="btn" title="Toggle theme">🌙 Dark</button>
+      </div>
     </div>
     <aside id="listPane"></aside>
   </div>
@@ -92,9 +109,8 @@
     const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';
     const PEER_ABLY_KEY = '9hDZwQ.LMHMDw:rHPAP8YjEeVfa5-SYle5UBnVtGpIFpck8fO4YH42Gp0';
     const LANDBOT_CONFIG_URL = 'https://storage.googleapis.com/landbot.pro/v3/H-3134109-L1UF7O5PAQOKJEPB/index.json';
-    /********************************/
 
-    // Session + bot
+    /************ Session + bot ************/
     const newId = () => (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
     const params = new URLSearchParams(location.search);
     const sessionId = params.get('session_id') || newId();
@@ -106,29 +122,51 @@
       variables: { session_id: sessionId }
     });
 
-    // Map (DARK)
+    /************ Theme boot ************/
+    const themeBtn = document.getElementById('themeBtn');
+    const saved = localStorage.getItem('ui-theme');
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    let theme = saved || (prefersDark ? 'dark' : 'light');
+    applyTheme(theme);
+
+    themeBtn.addEventListener('click', () => {
+      theme = theme === 'dark' ? 'light' : 'dark';
+      applyTheme(theme);
+      localStorage.setItem('ui-theme', theme);
+    });
+
+    function applyTheme(t){
+      document.body.classList.toggle('theme-dark', t === 'dark');
+      themeBtn.textContent = t === 'dark' ? '☀️ Light' : '🌙 Dark';
+      // If map exists, switch style (markers & popups persist—DOM-based)
+      if (window.__map) {
+        const uri = getComputedStyle(document.documentElement).getPropertyValue('--map-style').trim();
+        if (uri) window.__map.setStyle(uri);
+      }
+    }
+
+    /************ Map ************/
     mapboxgl.accessToken = MAPBOX_TOKEN;
+    const initialStyle = getComputedStyle(document.documentElement).getPropertyValue('--map-style').trim();
     const map = new mapboxgl.Map({
       container: 'map',
-      style: 'mapbox://styles/mapbox/dark-v11',   // ⟵ dark theme
+      style: initialStyle || 'mapbox://styles/mapbox/light-v11',
       center: [-0.1276, 51.5072],
       zoom: 9
     });
+    window.__map = map;
 
-    // Supabase + Ably
+    /************ Data plumbing ************/
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     const ably     = new Ably.Realtime(PEER_ABLY_KEY);
-    const propsCh  = ably.channels.get('props'); // expects { name:"props", data:{ propIDs: ... } }
+    const propsCh  = ably.channels.get('props');
 
-    /************ State + helpers ************/
     const listPane    = document.getElementById('listPane');
     const markersProp = new Map(); // propID -> Marker
-    const markersPOI  = new Map(); // UID   -> Marker
+    const markersPOI  = new Map(); // UID -> Marker
     let currentProps  = [];
 
-    const escapeHtml = (s='') => String(s)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    const escapeHtml = (s='') => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
     const emojiForType = (t='') => {
       const x = String(t).toLowerCase();
@@ -141,12 +179,7 @@
       return '📍';
     };
 
-    const makePin = (cls, text) => {
-      const el = document.createElement('div');
-      el.className = `pin ${cls}`;
-      el.textContent = text;
-      return el;
-    };
+    const makePin = (cls, text) => { const el = document.createElement('div'); el.className = `pin ${cls}`; el.textContent = text; return el; };
 
     const _geoCache = new Map();
     async function geocodeAddress(q){
@@ -163,11 +196,7 @@
       return null;
     }
 
-    function clearAllMarkers(){
-      for (const m of markersProp.values()) m.remove(); markersProp.clear();
-      for (const m of markersPOI.values())  m.remove();  markersPOI.clear();
-    }
-
+    function clearAllMarkers(){ for (const m of markersProp.values()) m.remove(); markersProp.clear(); for (const m of markersPOI.values()) m.remove(); markersPOI.clear(); }
     function fitToAllMarkers(pad=64){
       const all = [...markersProp.values(), ...markersPOI.values()];
       const coords = all.map(m => m.getLngLat());
@@ -177,43 +206,31 @@
       map.fitBounds(b, { padding: pad, duration: 800, maxZoom: 14 });
     }
 
-    /************ Data fetchers ************/
     async function fetchPropsByIds(propIDs){
       if (!Array.isArray(propIDs) || !propIDs.length) return [];
-      const { data, error } = await supabase
-        .from('test_prop')
+      const { data, error } = await supabase.from('test_prop')
         .select('propID, property, city, adress, Long, Lat, link, owner, property_description')
         .in('propID', propIDs.map(String));
       if (error) { console.error('[supabase] test_prop error', error); return []; }
-
       const out = [];
       for (const r of data){
         let lat = r.Lat ?? null, lon = r.Long ?? null;
-        if (lat==null || lon==null){
-          const g = await geocodeAddress(r.adress || `${r.property||''}, ${r.city||''}, UK`);
-          if (g){ lat=g.lat; lon=g.lon; }
-        }
+        if (lat==null || lon==null){ const g = await geocodeAddress(r.adress || `${r.property||''}, ${r.city||''}, UK`); if (g){ lat=g.lat; lon=g.lon; } }
         if (lat==null || lon==null) continue;
         out.push({ ...r, lat, lon });
       }
       return out;
     }
 
-    /* initial: show all */
     async function fetchAllProps(){
-      const { data, error } = await supabase
-        .from('test_prop')
+      const { data, error } = await supabase.from('test_prop')
         .select('propID, property, city, adress, Long, Lat, link, owner, property_description')
         .limit(500);
       if (error) { console.error('[supabase] fetchAllProps error', error); return []; }
-
       const out = [];
       for (const r of data){
         let lat = r.Lat ?? null, lon = r.Long ?? null;
-        if (lat==null || lon==null){
-          const g = await geocodeAddress(r.adress || `${r.property||''}, ${r.city||''}, UK`);
-          if (g){ lat=g.lat; lon=g.lon; }
-        }
+        if (lat==null || lon==null){ const g = await geocodeAddress(r.adress || `${r.property||''}, ${r.city||''}, UK`); if (g){ lat=g.lat; lon=g.lon; } }
         if (lat==null || lon==null) continue;
         out.push({ ...r, lat, lon });
       }
@@ -222,33 +239,24 @@
 
     async function fetchPOIsForProps(propIDs, { types=['cafe','bar','restaurant'], perTypeLimit=8 } = {}){
       if (!propIDs?.length) return [];
-      const { data, error } = await supabase
-        .from('Places_final')
+      const { data, error } = await supabase.from('Places_final')
         .select('UID, name, Address, type_single, propID')
-        .in('propID', propIDs.map(String))
-        .limit(1000);
+        .in('propID', propIDs.map(String)).limit(1000);
       if (error) { console.error('[supabase] Places_final error', error); return []; }
-
       const want = new Set(types.map(t => String(t).toLowerCase()));
       const perType = new Map();
       const out = [];
-
       for (const r of data){
         const t = String(r.type_single||'').toLowerCase();
         if (types.length && !want.has(t)) continue;
-        const used = perType.get(t) || 0;
-        if (used >= perTypeLimit) continue;
-
-        const g = await geocodeAddress(r.Address);
-        if (!g) continue;
-
+        const used = perType.get(t) || 0; if (used >= perTypeLimit) continue;
+        const g = await geocodeAddress(r.Address); if (!g) continue;
         out.push({ id:r.UID, name:r.name, address:r.Address, type:r.type_single, propID:r.propID, lat:g.lat, lon:g.lon });
         perType.set(t, used+1);
       }
       return out;
     }
 
-    /************ Draw ************/
     function drawProperty(p){
       const id = String(p.propID);
       const el = makePin('pin--prop','🏠');
@@ -263,7 +271,6 @@
         </div>`;
       marker.setLngLat([p.lon, p.lat]).setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'320px' }).setHTML(html)).addTo(map);
       markersProp.set(id, marker);
-
       el.addEventListener('mouseenter', ()=> toggleCardHot(id, true));
       el.addEventListener('mouseleave', ()=> toggleCardHot(id, false));
     }
@@ -284,7 +291,6 @@
       markersPOI.set(id, m);
     }
 
-    /************ Shortlist UI ************/
     function renderList(props){
       currentProps = props;
       if (!props.length){
@@ -300,7 +306,6 @@
           ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
         </article>
       `).join('');
-
       listPane.querySelectorAll('.card').forEach(card => {
         const id = card.getAttribute('data-id');
         card.addEventListener('mouseenter', ()=> toggleMarkerHot(id, true));
@@ -309,33 +314,13 @@
       });
     }
 
-    function toggleMarkerHot(id, on){
-      const m = markersProp.get(String(id));
-      if (!m) return;
-      m.getElement().classList.toggle('is-hot', !!on);
-    }
-    function toggleCardHot(id, on){
-      const card = listPane.querySelector(`.card[data-id="${CSS.escape(String(id))}"]`);
-      if (!card) return;
-      card.classList.toggle('is-active', !!on);
-    }
+    function toggleMarkerHot(id, on){ const m = markersProp.get(String(id)); if (!m) return; m.getElement().classList.toggle('is-hot', !!on); }
+    function toggleCardHot(id, on){ const card = listPane.querySelector(`.card[data-id="${CSS.escape(String(id))}"]`); if (!card) return; card.classList.toggle('is-active', !!on); }
+    function focusProperty(id){ const m = markersProp.get(String(id)); const row = currentProps.find(r => String(r.propID) === String(id)); if (!m || !row) return; map.flyTo({ center:[row.lon,row.lat], zoom:14, duration:600 }); setTimeout(()=> m.togglePopup(), 650); }
 
-    function focusProperty(id){
-      const m = markersProp.get(String(id));
-      const row = currentProps.find(r => String(r.propID) === String(id));
-      if (!m || !row) return;
-      map.flyTo({ center:[row.lon,row.lat], zoom:14, duration:600 });
-      setTimeout(()=> m.togglePopup(), 650);
-    }
-
-    /************ Ably subscription ************/
     function parsePropIDs(raw){
       if (Array.isArray(raw)) return raw.map(v => String(v).trim()).filter(Boolean);
-      if (typeof raw === 'string'){
-        const s = raw.trim();
-        if (s.startsWith('[')) { try { return JSON.parse(s).map(String); } catch{} }
-        return s.split(',').map(x => x.trim()).filter(Boolean);
-      }
+      if (typeof raw === 'string'){ const s = raw.trim(); if (s.startsWith('[')) { try { return JSON.parse(s).map(String); } catch{} } return s.split(',').map(x => x.trim()).filter(Boolean); }
       return [];
     }
 
@@ -345,22 +330,17 @@
 
       clearAllMarkers();
 
-      // 1) properties
       const props = await fetchPropsByIds(ids);
       props.forEach(drawProperty);
 
-      // 2) POIs near these properties
       const pois = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant'], perTypeLimit:8 });
       pois.forEach(drawPOI);
 
-      // 3) shortlist
       renderList(props);
-
-      // 4) adjust viewport
       fitToAllMarkers();
     });
 
-    /************ Initial load: show ALL properties ************/
+    /* Initial load → show ALL properties (no POIs to avoid clutter) */
     async function bootstrap(){
       const props = await fetchAllProps();
       if (!props.length) { renderList([]); return; }
@@ -368,11 +348,10 @@
       props.forEach(drawProperty);
       renderList(props);
       fitToAllMarkers();
-      // (avoid loading POIs on first load to reduce clutter)
     }
     bootstrap();
 
-    // manual console helper:  _show('12475','21144')
+    /* Console helper: _show('12475','21144') */
     window._show = async (...ids) => {
       const flat = ids.flat();
       clearAllMarkers();
