@@ -36,16 +36,19 @@
       </div>
 
       <!-- Filter bar -->
-      <div id="filtersBar">
+      <div id="filtersBar" class="collapsed">
         <div class="filters-row">
           <div class="filters-title">Filters</div>
           <div class="spacer"></div>
+          <button id="savedToggle" class="pill pill-ghost" aria-label="Show saved">❤ <span id="savedCount">0</span></button>
+          <button id="filtersReset" class="pill pill-ghost" aria-label="Reset filters">Reset</button>
+          <button id="filtersToggle" class="pill" aria-expanded="false">Show</button>
           <div id="countBadge" class="count-badge">0 properties in view</div>
         </div>
-        <div class="filters-section">
-          <label class="filters-label">Amenities (must include)</label>
-          <div id="amenityFilters" class="filters-chips"></div>
+        <div id="filtersBody" class="filters-body">
+          <div id="amenityFilters"></div>
         </div>
+        <div id="savedPanel" class="saved-panel" hidden></div>
       </div>
       <!-- Cards render beneath -->
       <div id="cardsMount"></div>

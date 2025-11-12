@@ -42,6 +42,67 @@ const listPane         = document.getElementById('listPane');
 const cardsMount       = document.getElementById('cardsMount');
 const countBadge       = document.getElementById('countBadge');
 const amenityFiltersEl = document.getElementById('amenityFilters');
+/* Filters + Saved drawer DOM refs (for collapse/reset/saved) */
+const filtersBar    = document.getElementById('filtersBar');
+const filtersBody   = document.getElementById('filtersBody');
+const filtersToggle = document.getElementById('filtersToggle');
+const filtersReset  = document.getElementById('filtersReset');
+const savedToggle   = document.getElementById('savedToggle');
+const savedCountEl  = document.getElementById('savedCount');
+const savedPanel    = document.getElementById('savedPanel');
+
+/* Filters collapse */
+filtersToggle?.addEventListener('click', ()=>{
+  const isCollapsed = filtersBar.classList.toggle('collapsed');
+  const expanded = !isCollapsed;
+  filtersToggle.textContent = expanded ? 'Hide' : 'Show';
+  filtersToggle.setAttribute('aria-expanded', String(expanded));
+});
+
+/* Reset filters */
+function resetFilters(){
+  filters.mustAmenities.clear();
+  renderAmenityFilters();
+  applyFilters();
+}
+filtersReset?.addEventListener('click', resetFilters);
+
+/* Saved state */
+const savedIds = new Set();
+function updateSavedCount(){ savedCountEl.textContent = String(savedIds.size); }
+function renderSavedPanel(){
+  if (!savedPanel) return;
+  if (!savedIds.size){
+    savedPanel.innerHTML = '<h4>Saved properties</h4><div class="meta">Nothing saved yet.</div>';
+    return;
+  }
+  const rows = currentProps
+    .filter(p => savedIds.has(String(p.propID)))
+    .map(p => `
+      <div class="saved-item">
+        <a href="${p.link || '#'}" target="_blank" rel="noopener">${escapeHtml(p.property || 'Property')}</a>
+        <button class="rm" data-id="${p.propID}" aria-label="Remove">✕</button>
+      </div>
+    `).join('');
+  savedPanel.innerHTML = `<h4>Saved properties</h4>${rows}`;
+  savedPanel.querySelectorAll('.rm').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = String(btn.getAttribute('data-id'));
+      savedIds.delete(id);
+      updateSavedCount();
+      renderSavedPanel();
+      // also update buttons in cards if visible
+      document.querySelectorAll('.save-btn[data-id="'+CSS.escape(id)+'"]').forEach(b=>b.classList.remove('is-on'));
+    });
+  });
+}
+savedToggle?.addEventListener('click', ()=>{
+  if (!savedPanel) return;
+  const nowHidden = savedPanel.hasAttribute('hidden') ? false : true; // toggle
+  if (nowHidden) savedPanel.setAttribute('hidden','');
+  else savedPanel.removeAttribute('hidden');
+  renderSavedPanel();
+});
 
 /* Mobile sheet toggles */
 const botPane       = document.getElementById('botPane');
@@ -147,6 +208,22 @@ function emojiForAmenityOrService(label=''){
   if (/\b(insurance|howden)\b/.test(s))                                      return '🧾';
   return '🏷️';
 }
+/* --- Canonical label normaliser for filters/utility detection --- */
+const CANON = [
+  { key:'all_bills',     label:'All bills included',  tests:[/all (utilities|utility bills|bills) included/i, /\bbills included\b/i] },
+  { key:'internet',      label:'Internet / Wi-Fi',     tests:[/wi[- ]?fi/i, /internet/i, /broadband/i, /high[- ]?speed/i] },
+  { key:'electricity',   label:'Electricity included', tests:[/electric(ity)? included/i, /\belectric(ity)?\b/i] },
+  { key:'water',         label:'Water included',       tests:[/water included/i, /\bwater\b/i] },
+  { key:'gas',           label:'Gas included',         tests:[/gas included/i, /\bgas\b/i] },
+  { key:'contents_ins',  label:'Contents insurance',   tests:[/contents? insurance/i] },
+];
+
+function canonKeyFor(label=''){
+  for (const c of CANON){ if (c.tests.some(rx => rx.test(label))) return c.key; }
+  return null;
+}
+function canonLabelForKey(key){ return (CANON.find(c=>c.key===key)||{}).label || key; }
+function isUtilityLabel(label){ return !!canonKeyFor(label); }
 
 const makePin = (cls, text) => {
   const el = document.createElement('div');
@@ -445,7 +522,9 @@ function renderLegend(){
 
 /* Amenity/Service chips with tooltips */
 function makeAmenityServiceRow({ amen=[], serv=[] } = {}, maxTotal=10){
-  const items = [...amen.map(x => ({...x, _t:'amen'})), ...serv.map(x => ({...x, _t:'serv'}))].slice(0, maxTotal);
+  // Drop utility-style labels from card display (they move to Filters)
+  const nonUtility = [...amen, ...serv].filter(it => !isUtilityLabel(it.label));
+  const items = nonUtility.slice(0, maxTotal).map((x)=> ({...x, _t: amen.includes(x) ? 'amen' : 'serv'}));
   if (!items.length) return '';
   const html = items.map(({icon,label,_t}) =>
     `<span class="chip chip--${_t}" data-tip="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icon}</span>`
@@ -510,7 +589,7 @@ function drawProperty(p){
   const chipsAS  = p._amenServ ? makeAmenityServiceRow(p._amenServ) : '';
 
   const img = firstImage(id);
-  const imgHtml = img ? `<img src="${img}" alt="" style="width:100%;height:auto;border-radius:10px;margin-bottom:6px;border:1px solid var(--card-border);" />` : '';
+  const imgHtml = img ? `<img src="${img}" alt="" class="popup-img" />` : '';
 
   const html = `
     <div style="font-size:13px; line-height:1.35; max-width:320px">
@@ -553,11 +632,11 @@ function drawPOI(r){
 /* POI chips (counts) */
 function makeChipRow(a){
   const bits = [];
-  if (a.cafe)       bits.push(`<span class="chip chip--poi" aria-label="Nearby cafés">☕ <b>${a.cafe}</b></span>`);
-  if (a.bar)        bits.push(`<span class="chip chip--poi" aria-label="Nearby bars">🍺 <b>${a.bar}</b></span>`);
-  if (a.restaurant) bits.push(`<span class="chip chip--poi" aria-label="Nearby restaurants">🍽️ <b>${a.restaurant}</b></span>`);
-  if (a.gym)        bits.push(`<span class="chip chip--poi" aria-label="Nearby gyms">💪 <b>${a.gym}</b></span>`);
-  if (a.park)       bits.push(`<span class="chip chip--poi" aria-label="Nearby parks">🌳 <b>${a.park}</b></span>`);
+  if (a.cafe)       bits.push(`<span class="chip chip--poi" data-tip="Cafés nearby" aria-label="Cafés nearby">☕ <b>${a.cafe}</b></span>`);
+  if (a.bar)        bits.push(`<span class="chip chip--poi" data-tip="Bars & pubs nearby" aria-label="Bars & pubs nearby">🍺 <b>${a.bar}</b></span>`);
+  if (a.restaurant) bits.push(`<span class="chip chip--poi" data-tip="Restaurants nearby" aria-label="Restaurants nearby">🍽️ <b>${a.restaurant}</b></span>`);
+  if (a.gym)        bits.push(`<span class="chip chip--poi" data-tip="Gyms nearby" aria-label="Gyms nearby">💪 <b>${a.gym}</b></span>`);
+  if (a.park)       bits.push(`<span class="chip chip--poi" data-tip="Parks & green spaces nearby" aria-label="Parks & green spaces nearby">🌳 <b>${a.park}</b></span>`);
   return bits.length ? `<div class="chips">${bits.join('')}</div>` : '';
 }
 
@@ -573,6 +652,7 @@ function renderList(props){
 
   cardsMount.innerHTML = props.map(p => `
     <article class="card" data-id="${p.propID}">
+      <button class="save-btn${(savedIds.has(String(p.propID))?' is-on':'')}" data-id="${p.propID}" aria-label="Save property">❤</button>
       <h3>${escapeHtml(p.property||'')}</h3>
       <div class="meta">${escapeHtml(p.city||'')}${p.owner ? ' · ' + escapeHtml(p.owner) : ''}</div>
       ${p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : ''}
@@ -584,8 +664,18 @@ function renderList(props){
     </article>
   `).join('');
 
-  // legend on top (but below filter bar)
-  renderLegend();
+  // Wire Save buttons here so they exist for this render (and don’t bubble to the card)
+  cardsMount.querySelectorAll('.save-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const id = String(btn.getAttribute('data-id'));
+      if (savedIds.has(id)) { savedIds.delete(id); btn.classList.remove('is-on'); }
+      else { savedIds.add(id); btn.classList.add('is-on'); }
+      updateSavedCount();
+      renderSavedPanel();
+    });
+  });
 
   // Card interactions — highlight only (no rings here)
   cardsMount.querySelectorAll('.card').forEach(card => {
@@ -608,6 +698,7 @@ function renderList(props){
   wireTooltips();
 }
 
+
 function toggleMarkerHot(id, on){
   const m = markersProp.get(String(id));
   if (!m) return;
@@ -621,41 +712,83 @@ function toggleCardHot(id, on){
 
 /************ Filters ************/
 function buildAmenityUniverse(){
-  const all = new Map(); // labelLower -> DisplayLabel
-  for (const [pid, as] of amenityIndex.entries()){
-    for (const item of [...(as.amen||[]), ...(as.serv||[])]){
-      const low = String(item.label).toLowerCase();
-      if (!all.has(low)) all.set(low, item.label);
+  // Tally canonical utilities
+  const canonCounts = new Map();        // key -> count
+  const canonLabels = new Map();        // key -> nice label
+  // Tally non-utility labels
+  const amenCounts = new Map();         // labelLower -> count
+  const amenDisplay = new Map();        // labelLower -> display
+
+  for (const [, as] of amenityIndex.entries()){
+    const seenCanon = new Set();
+    const seenAmen  = new Set();
+    const allItems = [...(as.amen||[]), ...(as.serv||[])];
+
+    for (const it of allItems){
+      const label = String(it.label||'').trim();
+      if (!label) continue;
+      const ckey = canonKeyFor(label);
+
+      if (ckey){
+        if (!seenCanon.has(ckey)){
+          seenCanon.add(ckey);
+          canonCounts.set(ckey, (canonCounts.get(ckey)||0)+1);
+          canonLabels.set(ckey, canonLabelForKey(ckey));
+        }
+      } else {
+        const low = label.toLowerCase();
+        if (!seenAmen.has(low)){
+          seenAmen.add(low);
+          amenCounts.set(low, (amenCounts.get(low)||0)+1);
+          amenDisplay.set(low, label);
+        }
+      }
     }
   }
-  // choose top ~12 common ones for MVP
-  const counts = {};
-  for (const [pid, as] of amenityIndex.entries()){
-    const seen = new Set();
-    for (const item of [...(as.amen||[]), ...(as.serv||[])]){
-      const low = String(item.label).toLowerCase();
-      if (seen.has(low)) continue;
-      seen.add(low);
-      counts[low] = (counts[low]||0)+1;
-    }
-  }
-  return [...all.entries()]
-    .sort((a,b)=> (counts[b[0]]||0)-(counts[a[0]]||0))
-    .slice(0, 12) // keep concise
-    .map(([low, disp]) => ({ low, disp }));
+
+  // Essentials (sorted by frequency)
+  const essentials = [...canonCounts.entries()]
+    .sort((a,b)=> b[1]-a[1])
+    .map(([key]) => ({ kind:'canon', key, label: canonLabels.get(key) }));
+
+  // Amenities/Services (top N, excluding utilities)
+  const MAX_AMEN = 12;
+  const amenities = [...amenCounts.entries()]
+    .sort((a,b)=> (b[1]||0)-(a[1]||0))
+    .slice(0, MAX_AMEN)
+    .map(([low]) => ({ kind:'label', key: low, label: amenDisplay.get(low) }));
+
+  return { essentials, amenities };
 }
 
 function renderAmenityFilters(){
-  const opts = buildAmenityUniverse();
-  amenityFiltersEl.innerHTML = opts.map(({low, disp}) => `
-    <button class="filter-chip" data-key="${low}">${escapeHtml(disp)}</button>
-  `).join('');
+  const { essentials, amenities } = buildAmenityUniverse();
+
+  const group = (title, items) => `
+    <div class="filters-label" style="margin-top:6px;">${escapeHtml(title)}</div>
+    <div class="filters-chips">
+      ${items.map(it => `
+        <button class="filter-chip" data-kind="${it.kind}" data-key="${it.key}">
+          ${escapeHtml(it.label)}
+        </button>
+      `).join('')}
+    </div>
+  `;
+
+  amenityFiltersEl.innerHTML = `
+    ${group('Essentials (bills & internet)', essentials)}
+    ${group('Amenities', amenities)}
+  `;
+
   amenityFiltersEl.querySelectorAll('.filter-chip').forEach(btn => {
-    const key = btn.getAttribute('data-key');
-    if (filters.mustAmenities.has(key)) btn.classList.add('is-on');
+    const kind = btn.getAttribute('data-kind');  // 'canon' or 'label'
+    const key  = btn.getAttribute('data-key');   // canon key or lowercased label
+    const token = `${kind}:${key}`;
+    if (filters.mustAmenities.has(token)) btn.classList.add('is-on');
+
     btn.addEventListener('click', ()=>{
-      if (filters.mustAmenities.has(key)) filters.mustAmenities.delete(key);
-      else filters.mustAmenities.add(key);
+      if (filters.mustAmenities.has(token)) filters.mustAmenities.delete(token);
+      else filters.mustAmenities.add(token);
       btn.classList.toggle('is-on');
       applyFilters();
     });
@@ -669,19 +802,31 @@ function applyFilters(){
     _amenServ: amenityIndex.get(String(p.propID)) || {amen:[], serv:[]}
   }));
 
-  // must-include amenities
+  // Build per-property lookup: canonical utilities + raw labels (lowercased)
+  function propSets(p){
+    const raw = new Set([...(p._amenServ.amen||[]), ...(p._amenServ.serv||[])]
+      .map(it => String(it.label).toLowerCase()));
+    const canon = new Set();
+    raw.forEach(lbl => { const k = canonKeyFor(lbl); if (k) canon.add(k); });
+    return { raw, canon };
+  }
+
+  // must-include (supports tokens like 'canon:internet' and 'label:roof terrace')
   if (filters.mustAmenities.size){
-    const keys = [...filters.mustAmenities];
+    const req = [...filters.mustAmenities];
     out = out.filter(p => {
-      const have = new Set([...(p._amenServ.amen||[]), ...(p._amenServ.serv||[])]
-        .map(it => String(it.label).toLowerCase()));
-      return keys.every(k => have.has(k));
+      const { raw, canon } = propSets(p);
+      return req.every(tok => {
+        const [kind, key] = tok.split(':');
+        if (kind === 'canon') return canon.has(key);
+        if (kind === 'label') return raw.has(key);
+        return false;
+      });
     });
   }
 
   // re-render markers & list
   clearAllMarkers();
-  // POI counts not recomputed here for speed; optional later
   out.forEach(drawProperty);
   renderList(out);
   fitToAllMarkers();

@@ -79,8 +79,27 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 }
 .filter-chip.is-on{ outline:2px solid #10b98155; background:#10b9811a; }
 
+/* compact ghost pill */
+.pill-ghost{
+  background:transparent; color:var(--text);
+  border:1px solid var(--card-border);
+}
+
+/* collapsible body */
+.filters-body{ padding:8px 12px 10px; border-top:1px solid var(--card-border); }
+#filtersBar.collapsed .filters-body{ display:none; }
+#filtersToggle{ min-width:64px; }
+
+/* saved drawer (inline, hidden until opened) */
+.saved-panel{ padding:10px 12px; border-top:1px dashed var(--card-border); background:var(--card); }
+.saved-panel h4{ margin:0 0 8px; font-size:13px; color:var(--muted); }
+.saved-item{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; font-size:13px; }
+.saved-item a{ text-decoration:none; }
+.saved-item .rm{ border:none; background:transparent; color:#9ca3af; cursor:pointer; }
+
 /* cards */
 .card{
+  position:relative;
   background:var(--card); color:var(--text); margin:12px; padding:14px; border-radius:12px;
   box-shadow:0 1px 8px rgba(0,0,0,0.06);
   transition:transform .12s ease, background .12s ease, outline .12s ease;
@@ -95,6 +114,12 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   color:var(--text); opacity:.9; font-size:13px; margin-top:8px; line-height:1.35;
   display:-webkit-box; -webkit-line-clamp:3; line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
 }
+.save-btn{
+  position:absolute; top:10px; right:12px;
+  border:none; background:transparent; cursor:pointer;
+  font-size:18px; color:#9ca3af;
+}
+.save-btn.is-on{ color:var(--accent-2); }
 
 /* gallery */
 .gallery{ margin-top:8px; overflow-x:auto; white-space:nowrap; border-radius:10px; }
@@ -126,8 +151,28 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 .empty{ color:var(--muted); font-size:13px; padding:14px; margin:12px; border:1px dashed var(--card-border); border-radius:10px; background:var(--card); }
 
 /* Mapbox popups honor theme */
-.mapboxgl-popup-content{ background:var(--popup-bg) !important; color:var(--popup-text) !important; }
-.mapboxgl-popup-tip{ border-top-color:var(--popup-bg) !important; border-bottom-color:var(--popup-bg) !important; }
+.mapboxgl-popup-content{
+  background:var(--popup-bg) !important;
+  color:var(--popup-text) !important;
+  max-width:340px;            /* matches your JS maxWidth */
+  max-height:340px;           /* prevent giant popups */
+  overflow:auto;              /* scroll if content is tall */
+}
+.mapboxgl-popup-tip{
+  border-top-color:var(--popup-bg) !important;
+  border-bottom-color:var(--popup-bg) !important;
+}
+
+/* Popup image: fixed height with cover so it doesn’t crop awkwardly */
+.popup-img{
+  display:block;
+  width:100%;
+  height:180px;               /* tweak to taste (160–220px works well) */
+  object-fit:cover;
+  border-radius:10px;
+  margin-bottom:6px;
+  border:1px solid var(--card-border);
+}
 
 /* Tooltip */
 .tt{
@@ -140,7 +185,8 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 /* Floating action buttons (mobile); hidden on desktop below */
 .fab{
   position:absolute;
-  bottom:calc(12px + env(safe-area-inset-bottom, 0px));
+  /* +24px lift to clear Android gesture bar; still honours safe area */
+  bottom:calc(36px + env(safe-area-inset-bottom, 0px));
   width:48px; height:48px; border-radius:50%;
   border:none; background:#111827; color:#fff;
   box-shadow:0 8px 24px rgba(0,0,0,.25);
