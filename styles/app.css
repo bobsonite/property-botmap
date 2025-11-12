@@ -34,7 +34,7 @@
 }
 
 html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
-.wrap { display:flex; height:100vh; }
+.wrap { display:flex; height:100vh; position:relative; }
 
 #botPane { width:28vw; min-width:320px; overflow:auto; }
 #map     { flex:1; position:relative; }
@@ -137,4 +137,90 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   max-width:260px; line-height:1.3;
 }
 
-@media (max-width:980px){ #listPane{ display:none; } }
+/* Floating action buttons (mobile); hidden on desktop below */
+.fab{
+  position:absolute;
+  bottom:calc(12px + env(safe-area-inset-bottom, 0px));
+  width:48px; height:48px; border-radius:50%;
+  border:none; background:#111827; color:#fff;
+  box-shadow:0 8px 24px rgba(0,0,0,.25);
+  font-size:22px; cursor:pointer; z-index:6;
+}
+#toggleChat{ left:12px; }
+#toggleList{ right:12px; }
+
+/* Mobile/Tablet sheet header (hidden on desktop) */
+.sheet-header{
+  display:none; /* visible on mobile/tablet via media query */
+  position:sticky; top:0; z-index:2;
+  background:var(--bg);
+  border-bottom:1px solid var(--card-border);
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 12px;
+}
+.sheet-title{ font-weight:600; font-size:14px; }
+.sheet-close{
+  border:none; background:transparent; font-size:18px; line-height:1;
+  color:var(--muted); cursor:pointer;
+}
+
+/* ===== Mobile & Tablet ≤1023px: bottom sheets + full-screen map ===== */
+@media (max-width:1023px){
+  #map{ flex:1; position:relative; }
+
+  /* Panels become bottom sheets */
+  #botPane,
+  #listPane{
+    position:absolute;
+    left:0; right:0;
+    height:72dvh;
+    bottom:-100%;
+    background:var(--bg);
+    border:1px solid var(--card-border);
+    border-bottom:none;
+    border-radius:16px 16px 0 0;
+    box-shadow:0 -16px 40px rgba(0,0,0,.35);
+    transition:bottom .28s ease;
+    z-index:5;
+    overflow:auto;
+  }
+  #botPane.active,
+  #listPane.active{ bottom:0; }
+
+  /* Ignore desktop widths on mobile */
+  #botPane{ width:auto; min-width:0; }
+  #listPane{ width:auto; min-width:0; max-width:none; }
+
+  /* Show the sheet header on mobile/tablet */
+  .sheet-header{ display:flex; }
+
+  /* Keep filter bar sticky inside list sheet */
+  #filtersBar{ position:sticky; top:0; z-index:1; }
+
+  /* Optional: dim map when a sheet is open */
+  #map::after{
+    content:"";
+    position:absolute; inset:0;
+    background:transparent;
+    transition:background .2s ease;
+    pointer-events:none;
+    z-index:1;
+  }
+  #botPane.active ~ #map::after,
+  #listPane.active ~ #map::after{
+    background:rgba(0,0,0,.12);
+  }
+}
+
+/* ===== Desktop ≥1024px: original 3-pane layout ===== */
+@media (min-width:1024px){
+  /* Keep existing widths/behaviour */
+  #botPane { width:28vw; min-width:320px; overflow:auto; }
+  #listPane{ width:25vw; min-width:300px; max-width:480px; overflow:auto; }
+
+  /* FABs hidden on desktop */
+  .fab{ display:none; }
+
+  /* Hide mobile sheet header on desktop (your panels already have context) */
+  .sheet-header{ display:none; }
+}

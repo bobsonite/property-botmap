@@ -2,15 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Student Housing — Bot + Map</title>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <link href="./styles/app.css" rel="stylesheet" />
 </head>
 <body>
   <div class="wrap">
-    <div id="botPane" title="Student Bot"></div>
+    <!-- Chat panel (left on desktop, bottom sheet on mobile) -->
+    <div id="botPane" title="Student Bot">
+      <!-- Mobile/Tablet header bar -->
+      <div class="sheet-header" data-for="botPane">
+        <div class="sheet-title">Chat</div>
+        <button class="sheet-close" aria-label="Close chat" data-close="#botPane">✕</button>
+      </div>
+      <!-- Landbot mounts inside this container (kept as-is by your script) -->
+    </div>
 
+    <!-- Map (centre) -->
     <div id="map">
       <div class="topbar">
         <span class="pill">session_id: <span id="sid"></span></span>
@@ -18,7 +27,14 @@
       </div>
     </div>
 
+    <!-- Properties panel (right on desktop, bottom sheet on mobile) -->
     <aside id="listPane">
+      <!-- Mobile/Tablet header bar -->
+      <div class="sheet-header" data-for="listPane">
+        <div class="sheet-title">Properties</div>
+        <button class="sheet-close" aria-label="Close properties" data-close="#listPane">✕</button>
+      </div>
+
       <!-- Filter bar -->
       <div id="filtersBar">
         <div class="filters-row">
@@ -34,6 +50,10 @@
       <!-- Cards render beneath -->
       <div id="cardsMount"></div>
     </aside>
+
+    <!-- Mobile FABs -->
+    <button id="toggleChat" class="fab" aria-label="Open chat">💬</button>
+    <button id="toggleList" class="fab" aria-label="Open properties">🏠</button>
   </div>
 
   <!-- Libs -->

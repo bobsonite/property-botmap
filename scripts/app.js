@@ -38,10 +38,66 @@ const ably     = new Ably.Realtime(PEER_ABLY_KEY);
 const propsCh  = ably.channels.get('props');
 
 /************ State + helpers ************/
-const listPane      = document.getElementById('listPane');
-const cardsMount    = document.getElementById('cardsMount');
-const countBadge    = document.getElementById('countBadge');
+const listPane         = document.getElementById('listPane');
+const cardsMount       = document.getElementById('cardsMount');
+const countBadge       = document.getElementById('countBadge');
 const amenityFiltersEl = document.getElementById('amenityFilters');
+
+/* Mobile sheet toggles */
+const botPane       = document.getElementById('botPane');
+const toggleChatBtn = document.getElementById('toggleChat');
+const toggleListBtn = document.getElementById('toggleList');
+const isMobileLike  = () => window.matchMedia('(max-width:1023px)').matches;
+
+/* Header close buttons (mobile/tablet) */
+document.querySelectorAll('.sheet-close').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    const sel = e.currentTarget.getAttribute('data-close');
+    if (!sel) return;
+    const el = document.querySelector(sel);
+    if (el) { el.classList.remove('active'); map && map.resize(); }
+  });
+});
+
+/* Open/close sheet helpers */
+function openSheet(which){
+  if (!isMobileLike()) return; // desktop shows both panels
+  if (which === 'chat'){
+    const on = !botPane.classList.contains('active');
+    botPane.classList.toggle('active', on);
+    listPane.classList.remove('active');
+  } else if (which === 'list'){
+    const on = !listPane.classList.contains('active');
+    listPane.classList.toggle('active', on);
+    botPane.classList.remove('active');
+  }
+  map && map.resize();
+}
+
+toggleChatBtn?.addEventListener('click', () => openSheet('chat'));
+toggleListBtn?.addEventListener('click', () => openSheet('list'));
+
+/* Ensure Mapbox resizes when sheets animate or viewport changes */
+['transitionend'].forEach(ev => {
+  botPane.addEventListener(ev, () => map && map.resize(), true);
+  listPane.addEventListener(ev, () => map && map.resize(), true);
+});
+window.addEventListener('resize', () => { map && map.resize(); });
+
+/* Basic swipe-to-close on mobile: pull down when scrolled to top */
+function attachSwipeClose(el){
+  let startY = null;
+  el.addEventListener('touchstart', (e) => { startY = e.touches[0].clientY; }, {passive:true});
+  el.addEventListener('touchmove', (e) => {
+    if (startY == null) return;
+    const dy = e.touches[0].clientY - startY;
+    const atTop = (el.scrollTop || 0) <= 0;
+    if (dy > 80 && atTop) { el.classList.remove('active'); startY = null; map && map.resize(); }
+  }, {passive:true});
+  el.addEventListener('touchend', () => { startY = null; }, {passive:true});
+}
+attachSwipeClose(botPane);
+attachSwipeClose(listPane);
 
 const markersProp  = new Map(); // propID -> Marker
 const markersPOI   = new Map(); // UID   -> Marker
