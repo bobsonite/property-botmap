@@ -51,7 +51,19 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   display:flex; align-items:center; gap:8px; border:1px solid var(--card-border);
   font-size:12px;
 }
-.pill { background:var(--chip-bg); color:var(--chip-text); padding:2px 8px; border-radius:999px; }
+.pill{
+  background:var(--chip-bg);
+  color:var(--chip-text);
+  padding:2px 10px;
+  border-radius:999px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  font-size:12px;
+  line-height:1;
+  min-height:26px;
+  white-space:nowrap;
+}
 
 /* markers */
 .pin{
@@ -60,16 +72,39 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   border-radius:50%; box-shadow:0 1px 6px rgba(0,0,0,.18);
   font-size:18px; transition:transform .12s ease, box-shadow .12s ease, background .12s ease;
 }
-.pin--prop { outline:2px solid #2563eb22; }
-.pin--poi  { outline:2px solid #a855f722; }
+
+/* Stacking: properties above POIs above universities */
+.pin--prop { outline:2px solid #2563eb22; z-index:3; }
+.pin--poi  { outline:2px solid #a855f722; z-index:2; }
 .pin.is-hot{ transform:scale(1.1); box-shadow:0 2px 10px rgba(37,99,235,.35); }
+
+/* campus markers */
+.pin--uni{ outline:2px solid #f9731622; z-index:1; }
 
 /* filter bar */
 #filtersBar{ position:sticky; top:0; z-index:1; background:var(--bg); border-bottom:1px solid var(--card-border); }
-.filters-row{ display:flex; align-items:center; gap:12px; padding:10px 12px; }
+.filters-row{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:8px;
+  padding:10px 12px;
+}
 .filters-title{ font-weight:600; }
 .spacer{ flex:1; }
-.count-badge{ background:#111827; color:white; font-size:12px; padding:4px 8px; border-radius:999px; }
+.count-badge{
+  background:var(--card);
+  color:var(--text);
+  font-size:12px;
+  padding:2px 10px;
+  border-radius:999px;
+  border:1px solid var(--card-border);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:26px;
+  white-space:nowrap;
+}
 .filters-section{ padding:8px 12px 10px; }
 .filters-label{ font-size:12px; color:var(--muted); display:block; margin-bottom:6px; }
 .filters-chips{ display:flex; gap:6px; flex-wrap:wrap; }
@@ -106,10 +141,20 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   border:1px solid var(--card-border); cursor:pointer;
 }
 .card:hover{ transform:translateY(-1px); }
-.card.is-active{ outline:2px solid #2563eb22; background:var(--card-hover); }
+.card.is-active{
+  outline:none;
+  border:2px solid var(--accent);
+  background:var(--card-hover);
+  box-shadow:0 0 0 1px rgba(37,99,235,0.08);
+}
 .card h3{ margin:0 0 4px; font-size:15px; }
 .meta{ color:var(--muted); font-size:12px; }
-.addr{ color:var(--muted); font-size:12px; margin-top:6px; }
+.addr{
+  color:var(--text);
+  font-size:13px;
+  margin-top:6px;
+  font-weight:500;
+}
 .desc{
   color:var(--text); opacity:.9; font-size:13px; margin-top:8px; line-height:1.35;
   display:-webkit-box; -webkit-line-clamp:3; line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
@@ -124,7 +169,13 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 /* gallery */
 .gallery{ margin-top:8px; overflow-x:auto; white-space:nowrap; border-radius:10px; }
 .gallery img{
-  height:88px; width:auto; display:inline-block; margin-right:6px; border-radius:10px; border:1px solid var(--card-border);
+  height:88px;
+  width:110px;
+  object-fit:cover;
+  display:inline-block;
+  margin-right:6px;
+  border-radius:10px;
+  border:1px solid var(--card-border);
 }
 
 /* chips */
@@ -149,6 +200,34 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 
 .link{ margin-top:8px; font-size:13px; }
 .empty{ color:var(--muted); font-size:13px; padding:14px; margin:12px; border:1px dashed var(--card-border); border-radius:10px; background:var(--card); }
+
+/* decision strip under address */
+.decision{
+  margin-top:4px;
+  font-size:12px;
+  color:var(--text);
+  font-weight:500;
+}
+
+/* campus markers */
+.pin--uni{ outline:2px solid #f9731622; }
+
+/* pressed state for toggle pills */
+button.pill[aria-pressed="true"],
+button.pill-ghost[aria-pressed="true"]{
+  background:var(--accent);
+  color:#ffffff;
+  border-color:var(--accent);
+}
+
+/* detail panel (future use) */
+.detail-panel{
+  display:block;
+  padding:10px 12px;
+  border-bottom:1px solid var(--card-border);
+  background:var(--card);
+}
+.detail-panel[hidden]{ display:none; }
 
 /* Mapbox popups honor theme */
 .mapboxgl-popup-content{

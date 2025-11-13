@@ -50,6 +50,7 @@ const filtersReset  = document.getElementById('filtersReset');
 const savedToggle   = document.getElementById('savedToggle');
 const savedCountEl  = document.getElementById('savedCount');
 const savedPanel    = document.getElementById('savedPanel');
+const placesToggle  = document.getElementById('placesToggle');
 
 /* Filters collapse */
 filtersToggle?.addEventListener('click', ()=>{
@@ -103,6 +104,15 @@ savedToggle?.addEventListener('click', ()=>{
   else savedPanel.removeAttribute('hidden');
   renderSavedPanel();
 });
+
+/* Places toggle */
+placesToggle?.addEventListener('click', ()=>{
+  showPlaces = !showPlaces;
+  placesToggle.setAttribute('aria-pressed', String(showPlaces));
+  syncPOIMarkers();
+});
+
+/* Universities are now always shown when data is available — no toggle needed. */
 
 /* Mobile sheet toggles */
 const botPane       = document.getElementById('botPane');
@@ -162,13 +172,18 @@ attachSwipeClose(listPane);
 
 const markersProp  = new Map(); // propID -> Marker
 const markersPOI   = new Map(); // UID   -> Marker
+const markersUni   = new Map(); // uniKey -> Marker
 
-let baseProps      = []; // raw from DB (with coords)
-let currentProps   = []; // filtered + decorated
-let amenityIndex   = new Map(); // pid -> { amen[], serv[] }
-let galleryIndex   = new Map(); // pid -> [{url, order}]
+let baseProps       = []; // raw from DB (with coords)
+let currentProps    = []; // filtered + decorated
+let amenityIndex    = new Map(); // pid -> { amen[], serv[] }
+let galleryIndex    = new Map(); // pid -> [{url, order}]
+let roomsIndex      = new Map(); // pid -> [{ room_type, price_per_week, available, tenure }]
 let currentRingsGeo = null;
 let hideRingsTimer  = null;
+
+let showPlaces       = false;
+let uniIndex         = null; // { campuses: Map, nearestByProp: Map }
 
 const filters = {
   mustAmenities: new Set(), // labels (case-insensitive compare)
@@ -255,9 +270,40 @@ function metersBetween(a,b){
   return 2*R*Math.asin(Math.sqrt(h));
 }
 
+/* Walking time/distance formatting */
+function formatWalkMins(mins){
+  if (mins == null) return null;
+  const m = Number(mins);
+  if (!Number.isFinite(m)) return null;
+  return `${m} min walk`;
+}
+function formatWalkDistance(meters){
+  if (meters == null) return null;
+  const v = Number(meters);
+  if (!Number.isFinite(v)) return null;
+
+  if (v >= 1000){
+    const km = v / 1000;
+    const fixed = km.toFixed(1);              // 1.2
+    const trimmed = fixed.replace(/\.0$/,''); // 1.0 -> 1
+    return `${trimmed} km walk`;
+  }
+  const rounded = Math.round(v);
+  return `${rounded.toLocaleString('en-GB')} m walk`;
+}
+
+function clearPOIMarkers(){
+  for (const m of markersPOI.values()) m.remove();
+  markersPOI.clear();
+}
+function clearUniMarkers(){
+  for (const m of markersUni.values()) m.remove();
+  markersUni.clear();
+}
+
 function clearAllMarkers(){
   for (const m of markersProp.values()) m.remove(); markersProp.clear();
-  for (const m of markersPOI.values())  m.remove();  markersPOI.clear();
+  clearPOIMarkers();
   removeRings();
 }
 
@@ -268,6 +314,143 @@ function fitToAllMarkers(pad=64){
   if (coords.length === 1){ map.flyTo({ center: coords[0], zoom: 13.5, duration: 700 }); return; }
   const b = new mapboxgl.LngLatBounds(coords[0], coords[0]); coords.forEach(c => b.extend(c));
   map.fitBounds(b, { padding: pad, duration: 800, maxZoom: 14 });
+}
+
+/************ POI + Campus helpers ************/
+function syncPOIMarkers(){
+  if (!showPlaces){
+    clearPOIMarkers();
+    return;
+  }
+  if (!baseProps.length) return;
+  const centers = new Map(baseProps.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
+  const ids = baseProps.map(p => String(p.propID));
+  fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:8, radiusMeters:800 }, centers)
+    .then(({ list }) => {
+      clearPOIMarkers();
+      list.forEach(drawPOI);
+    })
+    .catch(err => console.error('[POI] sync error', err));
+}
+
+function drawCampusMarkers(){
+  if (!uniIndex) return;
+  clearUniMarkers();
+  for (const [key, campus] of uniIndex.campuses.entries()){
+    if (campus.lon == null || campus.lat == null) continue;
+    const el = makePin('pin--uni','🎓');
+    const cityHtml  = campus.city ? `<div class="meta">${escapeHtml(campus.city)}</div>` : '';
+    const count     = campus.propIDs ? campus.propIDs.size : 0;
+    const popupHtml = `
+      <div style="font-size:13px; line-height:1.35">
+        <div style="font-weight:700">${escapeHtml(campus.name||'')}</div>
+        ${cityHtml}
+        <div class="meta">${count} linked properties</div>
+      </div>`;
+
+    const m = new mapboxgl.Marker({ element: el, anchor:'bottom' })
+      .setLngLat([campus.lon, campus.lat])
+      .setPopup(new mapboxgl.Popup({ offset:8 }).setHTML(popupHtml))
+      .addTo(map);
+    markersUni.set(key, m);
+  }
+}
+
+/************ University distance data ************/
+async function fetchUniDataForProps(propIDs){
+  if (!propIDs?.length) return { campuses:new Map(), nearestByProp:new Map() };
+
+  const ids = propIDs.map(String);
+
+  // NOTE: column names are all lower-case and exactly as in Supabase:
+  // "university_distance_final" with:
+  //   - "university"
+  //   - "university_postcode"
+  //   - "city"
+  //   - "propid"
+  //   - "metric"
+  //   - "value"
+  const { data, error } = await supabase
+    .from('university_distance_final')
+    .select('university, university_postcode, city, propid, metric, value')
+    .in('propid', ids);
+
+  if (error || !data?.length){
+    console.error('[supabase] university_distance_final error or empty', error);
+    return { campuses:new Map(), nearestByProp:new Map() };
+  }
+
+  const campuses     = new Map(); // uniKey -> { name, postcode, city, lat, lon, propIDs:Set }
+  const nearestByProp = new Map(); // pid -> { name, walkSecs, walkMins, walkMeters }
+
+  for (const r of data){
+    const pid      = String(r.propid);
+    const uniName  = String(r.university || '').trim();
+    const postcode = String(r.university_postcode || '').trim();
+    const city     = r.city || '';
+
+    if (!pid || !uniName || !postcode) continue;
+
+    const uniKey = `${uniName}|${postcode}`;
+    let campus = campuses.get(uniKey);
+    if (!campus){
+      campus = { name: uniName, postcode, city, lat: null, lon: null, propIDs: new Set() };
+      campuses.set(uniKey, campus);
+    }
+    campus.propIDs.add(pid);
+
+    const metricKey = String(r.metric || '').toLowerCase();
+    const val       = Number(r.value);
+    if (!Number.isFinite(val)) continue;
+
+    // Assumptions based on your data:
+    //  - time_* metrics (e.g. time_walking, Time_walking) are in SECONDS
+    //  - distance_* metrics (e.g. distance_walking) are in METRES
+    const existing = nearestByProp.get(pid) || {
+      name: uniName,
+      walkSecs:  null,
+      walkMins:  null,
+      walkMeters:null
+    };
+
+    const isWalkTime     = metricKey.startsWith('time_')     && metricKey.includes('walk');
+    const isWalkDistance = metricKey.startsWith('distance_') && metricKey.includes('walk');
+
+    if (isWalkTime){
+      const secs = val;
+      const mins = Math.round(secs / 60);
+      // keep the university with the shortest walking time for this property
+      if (existing.walkSecs == null || secs < existing.walkSecs){
+        nearestByProp.set(pid, {
+          ...existing,
+          name: uniName,
+          walkSecs: secs,
+          walkMins: mins
+        });
+      }
+    } else if (isWalkDistance){
+      const meters = Math.round(val);
+      const cur = nearestByProp.get(pid) || existing;
+      nearestByProp.set(pid, {
+        ...cur,
+        name: uniName,
+        walkMeters: meters
+      });
+    }
+    // other metrics (time_cycling, time_driving, distance_cycling, etc.)
+    // are ignored for now but are available for future use.
+  }
+
+  // Geocode each campus using the university_postcode
+  for (const campus of campuses.values()){
+    const g = await geocodeAddress(campus.postcode);
+    if (g){
+      campus.lat = g.lat;
+      campus.lon = g.lon;
+    }
+  }
+
+  return { campuses, nearestByProp };
 }
 
 /************ Data fetchers ************/
@@ -419,10 +602,69 @@ async function fetchGallery(propIDs){
     if (!by.has(pid)) by.set(pid, []);
     by.get(pid).push({ url:r.image_url, order: Number(r.image_order ?? 0) });
   }
-  for (const [pid, arr] of by.entries()){
+    for (const [pid, arr] of by.entries()){
     arr.sort((a,b)=> a.order - b.order);
   }
   return by;
+}
+
+/************ Rooms (price / type) ************/
+async function fetchRooms(propIDs){
+  const ids = (propIDs || []).map(String);
+  if (!ids.length) return new Map();
+
+  // Table: "room_price"
+  // Columns: "room_type", "price_per_week", "available", "tenure", "propid"
+  const { data, error } = await supabase
+    .from('room_price')
+    .select('room_type, price_per_week, available, tenure, propid')
+    .in('propid', ids)
+    .limit(10000);
+
+  if (error){
+    console.error('[supabase] room_price error', error);
+    return new Map();
+  }
+
+  const by = new Map();
+  for (const r of (data || [])){
+    const pid = String(r.propid);
+    if (!pid) continue;
+    if (!by.has(pid)) by.set(pid, []);
+    by.get(pid).push({
+      room_type:      r.room_type || '',
+      price_per_week: (r.price_per_week != null ? Number(r.price_per_week) : null),
+      available:      r.available,
+      tenure:         (r.tenure != null ? Number(r.tenure) : null)
+    });
+  }
+  return by;
+}
+
+/* Helper: summary string used in cards */
+function roomSummaryHtml(pid){
+  const rooms = roomsIndex.get(String(pid)) || [];
+  if (!rooms.length) return '';
+
+  // Prefer available rooms; fall back to any room if all are unavailable
+  const pool = rooms.filter(r =>
+    r.available === true || String(r.available).toLowerCase() === 'true'
+  );
+  const candidates = pool.length ? pool : rooms;
+
+  const priced = candidates.filter(r => Number.isFinite(r.price_per_week));
+  if (!priced.length) return '';
+
+  priced.sort((a,b) => a.price_per_week - b.price_per_week);
+  const best = priced[0];
+
+  const priceStr  = `£${best.price_per_week.toLocaleString('en-GB')}/week`;
+  const tenureStr = Number.isFinite(best.tenure) ? ` · ${best.tenure}-week` : '';
+  const typeStr   = best.room_type ? ` · ${escapeHtml(best.room_type)}` : '';
+
+  const availabilityNote = pool.length ? '' : ' (not currently available)';
+
+  return `<div class="meta">From ${priceStr}${tenureStr}${typeStr}${availabilityNote}</div>`;
 }
 
 /************ Proximity rings ************/
@@ -580,25 +822,52 @@ function firstImage(pid){
 }
 
 /************ Draw ************/
+function makePopupPoiSummary(a){
+  const bits = [];
+  if (a.cafe)       bits.push(`☕ ${a.cafe} cafés`);
+  if (a.bar)        bits.push(`🍺 ${a.bar} bars/pubs`);
+  if (a.restaurant) bits.push(`🍽️ ${a.restaurant} restaurants`);
+  if (a.gym)        bits.push(`💪 ${a.gym} gyms`);
+  if (a.park)       bits.push(`🌳 ${a.park} parks`);
+  if (!bits.length) return '';
+  const txt = bits.join(' · ');
+  return `<div class="meta">Nearby: ${escapeHtml(txt)}</div>`;
+}
+
 function drawProperty(p){
   const id = String(p.propID);
   const el = makePin('pin--prop','🏠');
   const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
 
-  const chipsPOI = p._amenityCounts ? makeChipRow(p._amenityCounts) : '';
-  const chipsAS  = p._amenServ ? makeAmenityServiceRow(p._amenServ) : '';
+  const ownerHtml   = p.owner ? `<div class="meta">${escapeHtml(p.owner)}</div>` : '';
+  const addrHtml    = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
+  const uniHtml     = (() => {
+    const u = p._nearestUni;
+    if (!u || !u.name) return '';
 
-  const img = firstImage(id);
-  const imgHtml = img ? `<img src="${img}" alt="" class="popup-img" />` : '';
+    const timePart = formatWalkMins(u.walkMins);
+    const distPart = formatWalkDistance(u.walkMeters);
+
+    let detail = '';
+    if (timePart && distPart) detail = `${timePart} (${distPart})`;
+    else detail = timePart || distPart;
+
+    const suffix = detail ? ` · ${detail}` : '';
+    return `<div class="meta">Nearest uni: ${escapeHtml(u.name)}${suffix}</div>`;
+  })();
+  const poiSummary  = p._amenityCounts ? makePopupPoiSummary(p._amenityCounts) : '';
+  const linkHtml    = p.link
+    ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>`
+    : '';
 
   const html = `
-    <div style="font-size:13px; line-height:1.35; max-width:320px">
-      ${imgHtml}
+    <div style="font-size:13px; line-height:1.35; max-width:260px">
       <div style="font-weight:700">${escapeHtml(p.property||'')}</div>
-      <div class="meta">${escapeHtml(p.city||'')}${p.owner ? ' · '+escapeHtml(p.owner) : ''}</div>
-      ${p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : ''}
-      ${chipsPOI}${chipsAS}
-      ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
+      ${ownerHtml}
+      ${addrHtml}
+      ${uniHtml}
+      ${poiSummary}
+      ${linkHtml}
     </div>`;
 
   marker
@@ -608,7 +877,7 @@ function drawProperty(p){
 
   markersProp.set(id, marker);
 
-  // Rings ONLY on map marker hover
+  // Rings + card scroll on map marker hover
   el.addEventListener('mouseenter', ()=> { toggleCardHot(id, true);  showRingsAt({lon:p.lon, lat:p.lat}); });
   el.addEventListener('mouseleave', ()=> { toggleCardHot(id, false); scheduleHideRings(); });
 }
@@ -650,19 +919,44 @@ function renderList(props){
     return;
   }
 
-  cardsMount.innerHTML = props.map(p => `
-    <article class="card" data-id="${p.propID}">
-      <button class="save-btn${(savedIds.has(String(p.propID))?' is-on':'')}" data-id="${p.propID}" aria-label="Save property">❤</button>
-      <h3>${escapeHtml(p.property||'')}</h3>
-      <div class="meta">${escapeHtml(p.city||'')}${p.owner ? ' · ' + escapeHtml(p.owner) : ''}</div>
-      ${p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : ''}
-      ${galleryHtml(p.propID)}
-      ${p.property_description ? `<div class="desc">${escapeHtml(p.property_description)}</div>` : ''}
-      ${p._amenityCounts ? makeChipRow(p._amenityCounts) : ''}
-      ${p._amenServ ? makeAmenityServiceRow(p._amenServ) : ''}
-      ${p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>` : ''}
-    </article>
-  `).join('');
+  cardsMount.innerHTML = props.map(p => {
+    const savedOn     = savedIds.has(String(p.propID)) ? ' is-on' : '';
+    const metaCity    = p.city ? escapeHtml(p.city) : '';
+    const addrHtml    = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
+    const priceHtml   = roomSummaryHtml(p.propID);
+    const uniHtml     = (() => {
+      const u = p._nearestUni;
+      if (!u || !u.name) return '';
+      const timePart = formatWalkMins(u.walkMins);
+      const distPart = formatWalkDistance(u.walkMeters);
+      let detail = '';
+      if (timePart && distPart) detail = `${timePart} (${distPart})`;
+      else detail = timePart || distPart;
+      return detail
+        ? `<div class="decision">Nearest uni: ${escapeHtml(u.name)} · ${detail}</div>`
+        : `<div class="decision">Nearest uni: ${escapeHtml(u.name)}</div>`;
+    })();
+      const descHtml    = p.property_description
+      ? `<div class="desc">${escapeHtml(p.property_description)}</div>`
+      : '';
+    const amenRow     = p._amenServ ? makeAmenityServiceRow(p._amenServ) : ''; // computed but not rendered (filters handle this now)
+    const linkHtml    = p.link
+      ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>`
+      : '';
+
+    return `
+      <article class="card" data-id="${p.propID}">
+        <button class="save-btn${savedOn}" data-id="${p.propID}" aria-label="Save property">❤</button>
+        <h3>${escapeHtml(p.property||'')}${p.owner ? ' · ' + escapeHtml(p.owner) : ''}</h3>
+        <div class="meta">${metaCity}</div>
+        ${addrHtml}
+        ${galleryHtml(p.propID)}
+        ${descHtml}
+        ${priceHtml}
+        ${uniHtml}
+        ${linkHtml}
+      </article>`;
+  }).join('');
 
   // Wire Save buttons here so they exist for this render (and don’t bubble to the card)
   cardsMount.querySelectorAll('.save-btn').forEach(btn => {
@@ -707,7 +1001,12 @@ function toggleMarkerHot(id, on){
 function toggleCardHot(id, on){
   const card = cardsMount.querySelector(`.card[data-id="${CSS.escape(String(id))}"]`);
   if (!card) return;
-  card.classList.toggle('is-active', !!on);
+  if (on){
+    card.classList.add('is-active');
+    card.scrollIntoView({ block:'start', behavior:'smooth' });
+  } else {
+    card.classList.remove('is-active');
+  }
 }
 
 /************ Filters ************/
@@ -830,6 +1129,8 @@ function applyFilters(){
   out.forEach(drawProperty);
   renderList(out);
   fitToAllMarkers();
+  syncPOIMarkers();
+  drawCampusMarkers();
 }
 
 /************ Ably subscription ************/
@@ -852,25 +1153,30 @@ propsCh.subscribe(async (msg) => {
   const props = await fetchPropsByIds(ids);
   const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
 
-  const { list: pois, counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:8, radiusMeters:800 }, centers);
+  const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
+  const uniData  = await fetchUniDataForProps(ids);
   const amenServ = await fetchAmenAndServices(ids);
   const gallery  = await fetchGallery(ids);
+  const rooms    = await fetchRooms(ids);
 
   amenityIndex = amenServ;
   galleryIndex = gallery;
+  roomsIndex   = rooms;
+  uniIndex     = uniData;
 
   baseProps = props.map(p => {
     const pid = String(p.propID);
     return {
       ...p,
-      _amenityCounts: counts.get(pid) || null
+      _amenityCounts: counts.get(pid) || null,
+      _nearestUni: uniData.nearestByProp.get(pid) || null
     };
   });
 
   // initial render (no filters applied yet)
   renderAmenityFilters();
-  applyFilters(); // will draw markers + list
-  pois.forEach(drawPOI);
+  applyFilters(); // will draw markers + list and sync POIs
+  drawCampusMarkers(); // campuses always visible when data available
 });
 
 /************ Initial load ************/
@@ -884,18 +1190,27 @@ async function bootstrap(){
   const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
   const ids = props.map(p => String(p.propID));
   const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
+  const uniData  = await fetchUniDataForProps(ids);
   const amenServ = await fetchAmenAndServices(ids);
   const gallery  = await fetchGallery(ids);
+  const rooms    = await fetchRooms(ids);
 
   amenityIndex = amenServ;
   galleryIndex = gallery;
+  roomsIndex   = rooms;
+  uniIndex     = uniData;
 
   baseProps = props.map(p => {
     const pid = String(p.propID);
-    return { ...p, _amenityCounts: counts.get(pid) || null };
+    return {
+      ...p,
+      _amenityCounts: counts.get(pid) || null,
+      _nearestUni: uniData.nearestByProp.get(pid) || null
+    };
   });
 
   renderAmenityFilters();
   applyFilters();
+  drawCampusMarkers();
 }
 map.once('load', bootstrap);
