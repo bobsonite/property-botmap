@@ -284,12 +284,12 @@ function formatWalkDistance(meters){
 
   if (v >= 1000){
     const km = v / 1000;
-    const fixed = km.toFixed(1);              // 1.2
-    const trimmed = fixed.replace(/\.0$/,''); // 1.0 -> 1
-    return `${trimmed} km walk`;
+    const fixed   = km.toFixed(1);              // e.g. 5.9
+    const trimmed = fixed.replace(/\.0$/,'');   // 5.0 -> 5
+    return `${trimmed} km`;
   }
   const rounded = Math.round(v);
-  return `${rounded.toLocaleString('en-GB')} m walk`;
+  return `${rounded.toLocaleString('en-GB')} m`;
 }
 
 function clearPOIMarkers(){
@@ -357,96 +357,73 @@ function drawCampusMarkers(){
 }
 
 /************ University distance data ************/
+/*
+  New table: "university_distance_n8n"
+  Columns: "university", "lat", "long",
+           "distance_walking", "time_walking",
+           "time_transport", "time_cycling",
+           "propid"
+*/
 async function fetchUniDataForProps(propIDs){
   if (!propIDs?.length) return { campuses:new Map(), nearestByProp:new Map() };
 
   const ids = propIDs.map(String);
 
-  // NOTE: column names are all lower-case and exactly as in Supabase:
-  // "university_distance_final" with:
-  //   - "university"
-  //   - "university_postcode"
-  //   - "city"
-  //   - "propid"
-  //   - "metric"
-  //   - "value"
   const { data, error } = await supabase
-    .from('university_distance_final')
-    .select('university, university_postcode, city, propid, metric, value')
+    .from('university_distance_n8n')
+    .select('university, lat, long, distance_walking, time_walking, time_transport, time_cycling, propid')
     .in('propid', ids);
 
   if (error || !data?.length){
-    console.error('[supabase] university_distance_final error or empty', error);
+    console.error('[supabase] university_distance_n8n error or empty', error);
     return { campuses:new Map(), nearestByProp:new Map() };
   }
 
-  const campuses     = new Map(); // uniKey -> { name, postcode, city, lat, lon, propIDs:Set }
-  const nearestByProp = new Map(); // pid -> { name, walkSecs, walkMins, walkMeters }
+  const campuses      = new Map(); // key -> { name, lat, lon, propIDs:Set }
+  const nearestByProp = new Map(); // pid -> { name, walkSecs, walkMins, walkMeters, cycleSecs, cycleMins, transportSecs, transportMins }
 
   for (const r of data){
-    const pid      = String(r.propid);
-    const uniName  = String(r.university || '').trim();
-    const postcode = String(r.university_postcode || '').trim();
-    const city     = r.city || '';
+    const pid     = String(r.propid);
+    const uniName = String(r.university || '').trim();
+    if (!pid || !uniName) continue;
 
-    if (!pid || !uniName || !postcode) continue;
+    const lat = r.lat  != null ? Number(r.lat)  : null;
+    const lon = r.long != null ? Number(r.long) : null;
 
-    const uniKey = `${uniName}|${postcode}`;
-    let campus = campuses.get(uniKey);
+    const campusKey = `${uniName}|${lat}|${lon}`;
+    let campus = campuses.get(campusKey);
     if (!campus){
-      campus = { name: uniName, postcode, city, lat: null, lon: null, propIDs: new Set() };
-      campuses.set(uniKey, campus);
+      campus = { name: uniName, lat, lon, propIDs: new Set() };
+      campuses.set(campusKey, campus);
     }
     campus.propIDs.add(pid);
 
-    const metricKey = String(r.metric || '').toLowerCase();
-    const val       = Number(r.value);
-    if (!Number.isFinite(val)) continue;
+    const walkSecs      = Number.isFinite(Number(r.time_walking))   ? Number(r.time_walking)   : null;
+    const walkMeters    = Number.isFinite(Number(r.distance_walking)) ? Math.round(Number(r.distance_walking)) : null;
+    const cycleSecs     = Number.isFinite(Number(r.time_cycling))   ? Number(r.time_cycling)   : null;
+    const transportSecs = Number.isFinite(Number(r.time_transport)) ? Number(r.time_transport) : null;
 
-    // Assumptions based on your data:
-    //  - time_* metrics (e.g. time_walking, Time_walking) are in SECONDS
-    //  - distance_* metrics (e.g. distance_walking) are in METRES
-    const existing = nearestByProp.get(pid) || {
+    const candidate = {
       name: uniName,
-      walkSecs:  null,
-      walkMins:  null,
-      walkMeters:null
+      walkSecs,
+      walkMins:      walkSecs != null ? Math.round(walkSecs / 60) : null,
+      walkMeters,
+      cycleSecs,
+      cycleMins:     cycleSecs != null ? Math.round(cycleSecs / 60) : null,
+      transportSecs,
+      transportMins: transportSecs != null ? Math.round(transportSecs / 60) : null
     };
 
-    const isWalkTime     = metricKey.startsWith('time_')     && metricKey.includes('walk');
-    const isWalkDistance = metricKey.startsWith('distance_') && metricKey.includes('walk');
-
-    if (isWalkTime){
-      const secs = val;
-      const mins = Math.round(secs / 60);
-      // keep the university with the shortest walking time for this property
-      if (existing.walkSecs == null || secs < existing.walkSecs){
-        nearestByProp.set(pid, {
-          ...existing,
-          name: uniName,
-          walkSecs: secs,
-          walkMins: mins
-        });
+    const prev = nearestByProp.get(pid);
+    // Prefer the uni with the shortest walking time; fall back to first seen
+    if (!prev){
+      nearestByProp.set(pid, candidate);
+    } else {
+      const prevSecs = prev.walkSecs;
+      const candSecs = candidate.walkSecs;
+      if (candSecs != null && (prevSecs == null || candSecs < prevSecs)){
+        nearestByProp.set(pid, candidate);
       }
-    } else if (isWalkDistance){
-      const meters = Math.round(val);
-      const cur = nearestByProp.get(pid) || existing;
-      nearestByProp.set(pid, {
-        ...cur,
-        name: uniName,
-        walkMeters: meters
-      });
-    }
-    // other metrics (time_cycling, time_driving, distance_cycling, etc.)
-    // are ignored for now but are available for future use.
-  }
-
-  // Geocode each campus using the university_postcode
-  for (const campus of campuses.values()){
-    const g = await geocodeAddress(campus.postcode);
-    if (g){
-      campus.lat = g.lat;
-      campus.lon = g.lon;
     }
   }
 
@@ -658,13 +635,25 @@ function roomSummaryHtml(pid){
   priced.sort((a,b) => a.price_per_week - b.price_per_week);
   const best = priced[0];
 
-  const priceStr  = `£${best.price_per_week.toLocaleString('en-GB')}/week`;
-  const tenureStr = Number.isFinite(best.tenure) ? ` · ${best.tenure}-week` : '';
-  const typeStr   = best.room_type ? ` · ${escapeHtml(best.room_type)}` : '';
+  const priceStr = `£${best.price_per_week.toLocaleString('en-GB')}/week`;
 
-  const availabilityNote = pool.length ? '' : ' (not currently available)';
+  const metaParts = [];
+  if (Number.isFinite(best.tenure)) metaParts.push(`${best.tenure}-week`);
+  if (best.room_type) metaParts.push(escapeHtml(best.room_type));
+  let metaText = metaParts.join(' · ');
+  if (!pool.length){
+    metaText = metaText ? `${metaText} · not currently available` : 'Not currently available';
+  }
 
-  return `<div class="meta">From ${priceStr}${tenureStr}${typeStr}${availabilityNote}</div>`;
+  const metaSpan = metaText ? `<span class="room-summary-meta">${metaText}</span>` : '';
+
+  return `
+    <div class="room-summary">
+      <span class="room-summary-label">🛏️ <span>Rooms from</span></span>
+      <span class="room-summary-price">${priceStr}</span>
+      ${metaSpan}
+    </div>
+  `;
 }
 
 /************ Proximity rings ************/
@@ -847,13 +836,23 @@ function drawProperty(p){
 
     const timePart = formatWalkMins(u.walkMins);
     const distPart = formatWalkDistance(u.walkMeters);
+    let walkDetail = '';
+    if (timePart && distPart) walkDetail = `${timePart} (${distPart})`;
+    else walkDetail = timePart || distPart || '';
 
-    let detail = '';
-    if (timePart && distPart) detail = `${timePart} (${distPart})`;
-    else detail = timePart || distPart;
+    const modeBits = [];
+    if (walkDetail) modeBits.push(`🚶 ${walkDetail}`);
+    if (u.cycleMins != null) modeBits.push(`🚲 ${u.cycleMins} min`);
+    if (u.transportMins != null) modeBits.push(`🚇 ${u.transportMins} min`);
 
-    const suffix = detail ? ` · ${detail}` : '';
-    return `<div class="meta">Nearest uni: ${escapeHtml(u.name)}${suffix}</div>`;
+    const modesHtml = modeBits.length
+      ? `<div class="meta transport-row">${escapeHtml(modeBits.join(' · '))}</div>`
+      : '';
+
+    return `
+      <div class="meta">Nearest uni: ${escapeHtml(u.name)}</div>
+      ${modesHtml}
+    `;
   })();
   const poiSummary  = p._amenityCounts ? makePopupPoiSummary(p._amenityCounts) : '';
   const linkHtml    = p.link

@@ -90,6 +90,11 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   gap:8px;
   padding:10px 12px;
 }
+.filters-left{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
 .filters-title{ font-weight:600; }
 .spacer{ flex:1; }
 .count-badge{
@@ -209,6 +214,31 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   font-weight:500;
 }
 
+/* room summary (“Rooms from …”) */
+.room-summary{
+  margin-top:10px;
+  padding-top:8px;
+  border-top:1px dashed var(--card-border);
+  font-size:13px;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+}
+.room-summary-label{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  font-weight:600;
+}
+.room-summary-price{
+  font-weight:600;
+}
+.room-summary-meta{
+  font-size:12px;
+  color:var(--muted);
+}
+
 /* campus markers */
 .pin--uni{ outline:2px solid #f9731622; }
 
@@ -230,6 +260,9 @@ button.pill-ghost[aria-pressed="true"]{
 .detail-panel[hidden]{ display:none; }
 
 /* Mapbox popups honor theme */
+.mapboxgl-popup{
+  z-index:10 !important;      /* ensure popup sits above markers */
+}
 .mapboxgl-popup-content{
   background:var(--popup-bg) !important;
   color:var(--popup-text) !important;
