@@ -38,15 +38,17 @@
 
       <!-- Filter bar -->
       <div id="filtersBar" class="collapsed">
+        <div class="filters-row filters-row-secondary">
+          <button id="savedToggle" class="pill pill-ghost" aria-label="Show saved">❤ <span id="savedCount">0</span></button>
+          <div class="spacer"></div>
+          <div id="countBadge" class="count-badge">0 properties in view</div>
+        </div>
         <div class="filters-row">
           <div class="filters-left">
             <div class="filters-title">Filters</div>
             <button id="filtersReset" class="pill pill-ghost" aria-label="Reset filters">Reset</button>
             <button id="filtersToggle" class="pill" aria-expanded="false">Show</button>
           </div>
-          <div class="spacer"></div>
-          <button id="savedToggle" class="pill pill-ghost" aria-label="Show saved">❤ <span id="savedCount">0</span></button>
-          <div id="countBadge" class="count-badge">0 properties in view</div>
         </div>
         <div id="filtersBody" class="filters-body">
           <div id="amenityFilters"></div>

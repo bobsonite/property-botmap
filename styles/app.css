@@ -9,14 +9,16 @@
   --popup-text:#111827;
   --chip-bg:#f3f4f6;
   --chip-text:#111827;
-  --accent:#2563eb;
-  --accent-2:#a855f7;
+  --accent:#6d28d9;   /* deep purple */
+  --accent-2:#a855f7; /* keep lighter violet as a secondary */
+  --panel-bg:#faf5ff;              /* very light lilac */
+  --panel-border-strong:#e4ddff;   /* slightly stronger than card border */
 
   /* Rings */
-  --ring-500: rgba(37,99,235,.10);
-  --ring-1000: rgba(37,99,235,.07);
-  --ring-2000: rgba(37,99,235,.05);
-  --ring-stroke:#2563eb;
+  --ring-500: rgba(109,40,217,.10);
+  --ring-1000: rgba(109,40,217,.07);
+  --ring-2000: rgba(109,40,217,.05);
+  --ring-stroke:#6d28d9;
   --ring-label:#1f2937;
   --ring-halo:#ffffff;
 
@@ -29,8 +31,9 @@
   /* Tooltip */
   --tt-bg: var(--card);
   --tt-text: var(--text);
-  --tt-border: var(--card-border);
-  --tt-shadow: 0 6px 24px rgba(0,0,0,.12);
+  /* soft purple border + slightly richer shadow */
+  --tt-border: rgba(168, 85, 247, .55);      /* uses your accent-2 purple */
+  --tt-shadow: 0 8px 20px rgba(88, 28, 135, .20);
 }
 
 html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
@@ -39,8 +42,12 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 #botPane { width:28vw; min-width:320px; overflow:auto; }
 #map     { flex:1; position:relative; }
 #listPane{
-  width:25vw; min-width:300px; max-width:480px; overflow:auto;
-  border-left:1px solid var(--card-border); background:var(--bg);
+  width:25vw;
+  min-width:300px;
+  max-width:480px;
+  overflow:auto;
+  border-left:1px solid var(--panel-border-strong);
+  background:var(--panel-bg);
 }
 
 /* topbar */
@@ -67,22 +74,55 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 
 /* markers */
 .pin{
-  width:30px; height:30px; display:flex; align-items:center; justify-content:center;
-  background:var(--card); border:1px solid var(--card-border);
-  border-radius:50%; box-shadow:0 1px 6px rgba(0,0,0,.18);
-  font-size:18px; transition:transform .12s ease, box-shadow .12s ease, background .12s ease;
+  width:34px;
+  height:34px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:50%;
+  background:var(--card);
+  border:2px solid var(--card-border);
+  box-shadow:0 2px 10px rgba(0,0,0,.22);
+  font-size:20px;
+  transition:
+    transform .12s ease,
+    box-shadow .12s ease,
+    background .12s ease,
+    border-color .12s ease;
 }
 
-/* Stacking: properties above POIs above universities */
-.pin--prop { outline:2px solid #2563eb22; z-index:3; }
-.pin--poi  { outline:2px solid #a855f722; z-index:2; }
-.pin.is-hot{ transform:scale(1.1); box-shadow:0 2px 10px rgba(37,99,235,.35); }
+/* Stacking: properties above POIs above universities
+   + soft type-specific tints */
+.pin--prop{
+  z-index:3;
+  background:#f5f3ff;               /* soft lilac */
+  border-color:var(--accent-2);     /* your purple */
+}
+.pin--poi{
+  z-index:2;
+  background:#ecfdf5;               /* pale green for POIs */
+  border-color:#10b981;             /* emerald */
+}
+.pin--uni{
+  z-index:1;
+  background:#fff7ed;               /* warm tint for campuses */
+  border-color:#f97316;             /* orange */
+}
 
-/* campus markers */
-.pin--uni{ outline:2px solid #f9731622; z-index:1; }
+/* Hover emphasis shared */
+.pin.is-hot{
+  transform:scale(1.1);
+  box-shadow:0 3px 14px rgba(88, 28, 135, .35);
+}
 
 /* filter bar */
-#filtersBar{ position:sticky; top:0; z-index:1; background:var(--bg); border-bottom:1px solid var(--card-border); }
+#filtersBar{
+  position:sticky;
+  top:0;
+  z-index:1;
+  background:var(--panel-bg); /* solid, no see-through */
+  border-bottom:1px solid var(--card-border);
+}
 .filters-row{
   display:flex;
   align-items:center;
@@ -95,20 +135,26 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   align-items:center;
   gap:8px;
 }
+.filters-row-secondary{
+  border-bottom:1px dashed var(--card-border);
+  padding-bottom:6px;
+  margin-bottom:-4px; /* tighten vertical spacing slightly */
+}
 .filters-title{ font-weight:600; }
 .spacer{ flex:1; }
 .count-badge{
-  background:var(--card);
-  color:var(--text);
+  background:var(--accent);
+  color:#ffffff;
   font-size:12px;
-  padding:2px 10px;
+  padding:4px 14px;
   border-radius:999px;
-  border:1px solid var(--card-border);
+  border:1px solid var(--accent);
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-height:26px;
+  min-height:28px;
   white-space:nowrap;
+  font-weight:600;
 }
 .filters-section{ padding:8px 12px 10px; }
 .filters-label{ font-size:12px; color:var(--muted); display:block; margin-bottom:6px; }
@@ -150,7 +196,7 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   outline:none;
   border:2px solid var(--accent);
   background:var(--card-hover);
-  box-shadow:0 0 0 1px rgba(37,99,235,0.08);
+  box-shadow:0 0 0 1px rgba(109,40,217,0.12);
 }
 .card h3{ margin:0 0 4px; font-size:15px; }
 .meta{ color:var(--muted); font-size:12px; }
@@ -204,6 +250,13 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 .legend .dot.poi { background:#9ca3af; opacity:.6; }
 
 .link{ margin-top:8px; font-size:13px; }
+.link a{
+  color:var(--accent-2);
+  text-decoration:none;
+}
+.link a:hover{
+  text-decoration:underline;
+}
 .empty{ color:var(--muted); font-size:13px; padding:14px; margin:12px; border:1px dashed var(--card-border); border-radius:10px; background:var(--card); }
 
 /* decision strip under address */
@@ -289,9 +342,15 @@ button.pill-ghost[aria-pressed="true"]{
 /* Tooltip */
 .tt{
   position:fixed; z-index:9999; pointer-events:none;
-  background:var(--tt-bg); color:var(--tt-text); border:1px solid var(--tt-border);
-  padding:6px 8px; border-radius:8px; box-shadow:var(--tt-shadow); font-size:12px;
-  max-width:260px; line-height:1.3;
+  background:var(--tt-bg);
+  color:var(--tt-text);
+  border:1px solid var(--tt-border);
+  padding:6px 10px;
+  border-radius:10px;
+  box-shadow:var(--tt-shadow);
+  font-size:13px;
+  max-width:260px;
+  line-height:1.35;
 }
 
 /* Floating action buttons (mobile); hidden on desktop below */

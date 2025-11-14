@@ -352,6 +352,20 @@ function drawCampusMarkers(){
       .setLngLat([campus.lon, campus.lat])
       .setPopup(new mapboxgl.Popup({ offset:8 }).setHTML(popupHtml))
       .addTo(map);
+
+    // Hover: show university name as a tooltip
+    const hoverLabel = campus.name || 'University';
+    const domEl = m.getElement();
+    domEl.addEventListener('mouseenter', (e) => {
+      showTip(hoverLabel, e.clientX, e.clientY);
+    });
+    domEl.addEventListener('mousemove', (e) => {
+      showTip(hoverLabel, e.clientX, e.clientY);
+    });
+    domEl.addEventListener('mouseleave', () => {
+      hideTip();
+    });
+
     markersUni.set(key, m);
   }
 }
@@ -697,7 +711,7 @@ function addRingLayers(geo){
       500, getComputedStyle(document.documentElement).getPropertyValue('--ring-500').trim(),
       1000, getComputedStyle(document.documentElement).getPropertyValue('--ring-1000').trim(),
       2000, getComputedStyle(document.documentElement).getPropertyValue('--ring-2000').trim(),
-      'rgba(37,99,235,0.08)'
+      'rgba(109,40,217,0.10)'
     ],
     'fill-opacity': 1
   }});
@@ -738,6 +752,25 @@ function scheduleHideRings(){
 /************ UI helpers ************/
 function setCount(n){
   countBadge.textContent = `${n} ${n===1?'property':'properties'} in view`;
+}
+
+function updateCountForViewport(){
+  // Count how many of the *currently filtered* properties fall inside the map view
+  if (!map || !map.getBounds) return;
+
+  if (!currentProps || !currentProps.length){
+    setCount(0);
+    return;
+  }
+
+  const bounds = map.getBounds();
+  let visible = 0;
+
+  for (const p of currentProps){
+    if (bounds.contains([p.lon, p.lat])) visible++;
+  }
+
+  setCount(visible);
 }
 
 /* Legend (kept) */
@@ -876,9 +909,19 @@ function drawProperty(p){
 
   markersProp.set(id, marker);
 
-  // Rings + card scroll on map marker hover
-  el.addEventListener('mouseenter', ()=> { toggleCardHot(id, true);  showRingsAt({lon:p.lon, lat:p.lat}); });
-  el.addEventListener('mouseleave', ()=> { toggleCardHot(id, false); scheduleHideRings(); });
+  // Hover: highlight card + show property name as a tooltip (no more rings)
+  const hoverLabel = p.property || 'Property';
+  el.addEventListener('mouseenter', (e)=> {
+    toggleCardHot(id, true);
+    showTip(hoverLabel, e.clientX, e.clientY);
+  });
+  el.addEventListener('mousemove', (e)=> {
+    showTip(hoverLabel, e.clientX, e.clientY);
+  });
+  el.addEventListener('mouseleave', ()=> {
+    toggleCardHot(id, false);
+    hideTip();
+  });
 }
 
 function drawPOI(r){
@@ -912,6 +955,7 @@ function makeChipRow(a){
 function renderList(props){
   currentProps = props;
   setCount(props.length);
+  updateCountForViewport();
 
   if (!props.length){
     cardsMount.innerHTML = `<div class="empty">No properties to display yet.<br/>Ask the bot for an area or a university 🙂</div>`;
@@ -997,12 +1041,31 @@ function toggleMarkerHot(id, on){
   if (!m) return;
   m.getElement().classList.toggle('is-hot', !!on);
 }
+function scrollCardIntoView(card){
+  if (!card || !listPane) return;
+
+  const paneRect = listPane.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+
+  // How far the card’s top is from the pane’s top *within* the scroll container
+  const offsetWithinPane = cardRect.top - paneRect.top;
+
+  // Reserve some space for the sticky header + a little breathing room
+  const headerPadding = 72; // adjust to taste (px)
+
+  // Only scroll if the card is too high (under header) or too low (out of view)
+  if (offsetWithinPane < headerPadding ||
+      offsetWithinPane > listPane.clientHeight - headerPadding){
+    const targetScrollTop = listPane.scrollTop + offsetWithinPane - headerPadding;
+    listPane.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
+  }
+}
 function toggleCardHot(id, on){
   const card = cardsMount.querySelector(`.card[data-id="${CSS.escape(String(id))}"]`);
   if (!card) return;
   if (on){
     card.classList.add('is-active');
-    card.scrollIntoView({ block:'start', behavior:'smooth' });
+    scrollCardIntoView(card);
   } else {
     card.classList.remove('is-active');
   }
@@ -1213,3 +1276,4 @@ async function bootstrap(){
   drawCampusMarkers();
 }
 map.once('load', bootstrap);
+map.on('moveend', updateCountForViewport);
