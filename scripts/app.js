@@ -175,7 +175,8 @@ const markersPOI   = new Map(); // UID   -> Marker
 const markersUni   = new Map(); // uniKey -> Marker
 
 let baseProps       = []; // raw from DB (with coords)
-let currentProps    = []; // filtered + decorated
+let filteredProps   = []; // after filters, before viewport clip
+let currentProps    = []; // actually rendered (in current viewport)
 let amenityIndex    = new Map(); // pid -> { amen[], serv[] }
 let galleryIndex    = new Map(); // pid -> [{url, order}]
 let roomsIndex      = new Map(); // pid -> [{ room_type, price_per_week, available, tenure }]
@@ -754,23 +755,23 @@ function setCount(n){
   countBadge.textContent = `${n} ${n===1?'property':'properties'} in view`;
 }
 
-function updateCountForViewport(){
-  // Count how many of the *currently filtered* properties fall inside the map view
+function updateViewportList(){
   if (!map || !map.getBounds) return;
 
-  if (!currentProps || !currentProps.length){
-    setCount(0);
+  const source =
+    (filteredProps && filteredProps.length) ? filteredProps :
+    (baseProps && baseProps.length)        ? baseProps     :
+    [];
+
+  if (!source.length){
+    renderList([]);
     return;
   }
 
-  const bounds = map.getBounds();
-  let visible = 0;
+  const bounds  = map.getBounds();
+  const visible = source.filter(p => bounds.contains([p.lon, p.lat]));
 
-  for (const p of currentProps){
-    if (bounds.contains([p.lon, p.lat])) visible++;
-  }
-
-  setCount(visible);
+  renderList(visible);
 }
 
 /* Legend (kept) */
@@ -955,7 +956,6 @@ function makeChipRow(a){
 function renderList(props){
   currentProps = props;
   setCount(props.length);
-  updateCountForViewport();
 
   if (!props.length){
     cardsMount.innerHTML = `<div class="empty">No properties to display yet.<br/>Ask the bot for an area or a university 🙂</div>`;
@@ -963,11 +963,11 @@ function renderList(props){
   }
 
   cardsMount.innerHTML = props.map(p => {
-    const savedOn     = savedIds.has(String(p.propID)) ? ' is-on' : '';
-    const metaCity    = p.city ? escapeHtml(p.city) : '';
-    const addrHtml    = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
-    const priceHtml   = roomSummaryHtml(p.propID);
-    const uniHtml     = (() => {
+    const savedOn   = savedIds.has(String(p.propID)) ? ' is-on' : '';
+    const metaCity  = p.city ? escapeHtml(p.city) : '';
+    const addrHtml  = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
+    const priceHtml = roomSummaryHtml(p.propID);
+    const uniHtml   = (() => {
       const u = p._nearestUni;
       if (!u || !u.name) return '';
       const timePart = formatWalkMins(u.walkMins);
@@ -979,11 +979,16 @@ function renderList(props){
         ? `<div class="decision">Nearest uni: ${escapeHtml(u.name)} · ${detail}</div>`
         : `<div class="decision">Nearest uni: ${escapeHtml(u.name)}</div>`;
     })();
-      const descHtml    = p.property_description
+
+    const hasDesc  = !!p.property_description;
+    const descHtml = hasDesc
       ? `<div class="desc">${escapeHtml(p.property_description)}</div>`
       : '';
-    const amenRow     = p._amenServ ? makeAmenityServiceRow(p._amenServ) : ''; // computed but not rendered (filters handle this now)
-    const linkHtml    = p.link
+    const readMoreHtml = hasDesc
+      ? `<button type="button" class="read-more">Read more</button>`
+      : '';
+
+    const linkHtml = p.link
       ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>`
       : '';
 
@@ -995,13 +1000,14 @@ function renderList(props){
         ${addrHtml}
         ${galleryHtml(p.propID)}
         ${descHtml}
+        ${readMoreHtml}
         ${priceHtml}
         ${uniHtml}
         ${linkHtml}
       </article>`;
   }).join('');
 
-  // Wire Save buttons here so they exist for this render (and don’t bubble to the card)
+  // Wire Save buttons
   cardsMount.querySelectorAll('.save-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1032,6 +1038,21 @@ function renderList(props){
     });
   });
 
+  // Read more / less toggles
+  cardsMount.querySelectorAll('.read-more').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const card = btn.closest('.card');
+      if (!card) return;
+      const desc = card.querySelector('.desc');
+      if (!desc) return;
+      const expanded = desc.classList.toggle('is-expanded');
+      btn.textContent = expanded ? 'Read less' : 'Read more';
+      // Keep the expanded card fully visible
+      scrollCardIntoView(card);
+    });
+  });
+
   wireTooltips();
 }
 
@@ -1047,13 +1068,14 @@ function scrollCardIntoView(card){
   const paneRect = listPane.getBoundingClientRect();
   const cardRect = card.getBoundingClientRect();
 
-  // How far the card’s top is from the pane’s top *within* the scroll container
+  // Distance from the top of the scroll container
   const offsetWithinPane = cardRect.top - paneRect.top;
 
-  // Reserve some space for the sticky header + a little breathing room
-  const headerPadding = 72; // adjust to taste (px)
+  // Use the real sticky header height + a bit of breathing room
+  const headerHeight  = filtersBar ? filtersBar.getBoundingClientRect().height : 0;
+  const headerPadding = headerHeight + 8; // 8px gap under the header
 
-  // Only scroll if the card is too high (under header) or too low (out of view)
+  // Only scroll if the card is tucked under the header or way below the viewport
   if (offsetWithinPane < headerPadding ||
       offsetWithinPane > listPane.clientHeight - headerPadding){
     const targetScrollTop = listPane.scrollTop + offsetWithinPane - headerPadding;
@@ -1186,13 +1208,15 @@ function applyFilters(){
     });
   }
 
-  // re-render markers & list
+  // Save filtered list, re-render markers, then show only what’s in view
+  filteredProps = out;
+
   clearAllMarkers();
   out.forEach(drawProperty);
-  renderList(out);
   fitToAllMarkers();
   syncPOIMarkers();
   drawCampusMarkers();
+  updateViewportList();
 }
 
 /************ Ably subscription ************/
@@ -1276,4 +1300,4 @@ async function bootstrap(){
   drawCampusMarkers();
 }
 map.once('load', bootstrap);
-map.on('moveend', updateCountForViewport);
+map.on('moveend', updateViewportList);

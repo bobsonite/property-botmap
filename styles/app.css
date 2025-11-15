@@ -206,9 +206,40 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   margin-top:6px;
   font-weight:500;
 }
+
+/* Property description: 3-line teaser by default */
 .desc{
-  color:var(--text); opacity:.9; font-size:13px; margin-top:8px; line-height:1.35;
-  display:-webkit-box; -webkit-line-clamp:3; line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  color:var(--text);
+  font-size:13px;
+  margin-top:8px;
+  line-height:1.35;
+  display:-webkit-box;
+  -webkit-line-clamp:3;      /* show only first 3 lines */
+  line-clamp:3;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+
+/* When expanded via the button, show full text */
+.desc.is-expanded{
+  -webkit-line-clamp:unset;
+  line-clamp:unset;
+  display:block;
+  overflow:visible;
+}
+
+.read-more{
+  margin-top:4px;
+  border:none;
+  background:none;
+  padding:0;
+  font-size:12px;
+  color:var(--accent-2);
+  cursor:pointer;
+  text-decoration:underline;
+}
+.read-more:hover{
+  text-decoration:none;
 }
 .save-btn{
   position:absolute; top:10px; right:12px;
