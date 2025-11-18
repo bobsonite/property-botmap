@@ -12,15 +12,31 @@ const STYLES = {
 const USE_SATELLITE = false; // flip to true for satellite hybrid
 
 /************ Session + bot ************/
-const newId = () => (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+const newId = () =>
+  (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+
 const params = new URLSearchParams(location.search);
-const sessionId = params.get('session_id') || newId();
-document.getElementById('sid').textContent = sessionId;
+
+// Prefer ?page_session_id=… but fall back to ?session_id=… for older links
+const rawPageSession = params.get('page_session_id') || params.get('session_id');
+const pageSessionId  = rawPageSession || newId();
+
+// Keep old name around so any existing code that uses `sessionId` still works
+const sessionId = pageSessionId;
+
+const sidEl = document.getElementById('sid');
+if (sidEl) sidEl.textContent = pageSessionId;
+
+// Debug: expose the session ID on window so we can poke it in DevTools
+window.pageSessionId = pageSessionId;
 
 new window.Landbot.Container({
   container: '#botPane',
   configUrl: LANDBOT_CONFIG_URL,
-  variables: { session_id: sessionId }
+  variables: {
+    page_session_id: pageSessionId,   // <-- what Landbot/n8n will use
+    session_id:      pageSessionId    // <-- optional, for any existing Landbot logic
+  }
 });
 
 /************ Map ************/
@@ -35,7 +51,17 @@ const map = new mapboxgl.Map({
 /************ Supabase + Ably ************/
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const ably     = new Ably.Realtime(PEER_ABLY_KEY);
-const propsCh  = ably.channels.get('props');
+
+// Ably connection debug
+ably.connection.on('connected', () => {
+  console.log('[ABLY] Connected, connectionId =', ably.connection.id);
+});
+ably.connection.on('failed', (state) => {
+  console.error('[ABLY] Connection FAILED', state);
+});
+
+// Expose Ably client for DevTools poking (optional but handy)
+window.ablyClient = ably;
 
 /************ State + helpers ************/
 const listPane         = document.getElementById('listPane');
@@ -186,6 +212,9 @@ let hideRingsTimer  = null;
 let showPlaces       = false;
 let uniIndex         = null; // { campuses: Map, nearestByProp: Map }
 
+// Ably session binding: first session_id we see from Ably for this tab
+let ablyBoundSession = null;
+
 const filters = {
   mustAmenities: new Set(), // labels (case-insensitive compare)
 };
@@ -307,6 +336,7 @@ function clearAllMarkers(){
   clearPOIMarkers();
   removeRings();
 }
+
 
 function fitToAllMarkers(pad=64){
   const all = [...markersProp.values(), ...markersPOI.values()];
@@ -1230,16 +1260,79 @@ function parsePropIDs(raw){
   return [];
 }
 
-propsCh.subscribe(async (msg) => {
-  const ids = parsePropIDs(msg?.data?.propIDs);
-  if (!ids.length) return;
+async function handlePropsMessage(msg, channelName){
+  // 1) See exactly what is coming from Ably
+  console.log('[ABLY RAW MESSAGE]', 'channel =', channelName, msg);
+
+  // 2) Be defensive about nesting:
+  //    - msg.data = { propIDs, session_id, trigger }
+  //    - msg.data = { data: { propIDs, session_id, page_session_id } }
+  const root = msg?.data || {};
+  const data = (root && root.data &&
+                root.propIDs === undefined &&
+                root.session_id === undefined &&
+                root.page_session_id === undefined)
+    ? root.data
+    : root;
+
+  console.log('[ABLY EFFECTIVE DATA]',
+    data,
+    'pageSessionId =', pageSessionId,
+    'sessionId =', sessionId,
+    'channel =', channelName
+  );
+
+  // 3) Session information from payload
+  const msgSession =
+    data.page_session_id ??
+    data.pageSessionId ??
+    data.session_id ??
+    data.sessionId ??
+    data.sessionID ??
+    null;
+
+  console.log(
+    '[ABLY] msgSession from payload =', msgSession,
+    'currently bound =', ablyBoundSession,
+    'local pageSessionId =', sessionId
+  );
+
+  // Bind once to whatever Ably sends us first, then ignore others
+  if (msgSession) {
+    if (!ablyBoundSession) {
+      ablyBoundSession = msgSession;
+      console.log('[ABLY] Binding this tab to Ably session', ablyBoundSession);
+    } else if (msgSession !== ablyBoundSession) {
+      console.log(
+        '[ABLY] Ignoring message for different Ably session',
+        msgSession, 'expected', ablyBoundSession, 'on channel', channelName
+      );
+      return;
+    }
+  }
+
+  // 4) Property IDs
+  const ids = parsePropIDs(data.propIDs);
+  console.log('[ABLY] Parsed propIDs from', channelName, ':', ids);
+
+  if (!ids.length) {
+    console.warn('[ABLY] Message had no usable propIDs, skipping');
+    return;
+  }
 
   clearAllMarkers();
 
+  console.log('[ABLY] Fetching properties from Supabase for IDs', ids);
   const props = await fetchPropsByIds(ids);
+  console.log('[ABLY] Supabase returned', props.length, 'properties');
+
   const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
 
-  const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
+  const { counts } = await fetchPOIsForProps(
+    ids,
+    { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 },
+    centers
+  );
   const uniData  = await fetchUniDataForProps(ids);
   const amenServ = await fetchAmenAndServices(ids);
   const gallery  = await fetchGallery(ids);
@@ -1259,10 +1352,28 @@ propsCh.subscribe(async (msg) => {
     };
   });
 
+  console.log('[ABLY] baseProps now has', baseProps.length, 'properties; re-rendering');
+
   // initial render (no filters applied yet)
   renderAmenityFilters();
   applyFilters(); // will draw markers + list and sync POIs
   drawCampusMarkers(); // campuses always visible when data available
+}
+
+// Subscribe to shared "props" channel (backend now sends everything here)
+const propsChannel = ably.channels.get('props');
+console.log('[ABLY] Subscribing to channel "props"');
+
+propsChannel.on('attached', () => {
+  console.log('[ABLY] Channel attached "props"');
+});
+propsChannel.on('failed', (err) => {
+  console.error('[ABLY] Channel FAILED "props"', err);
+});
+
+propsChannel.subscribe((msg) => {
+  console.log('[ABLY] Message on channel "props"');
+  handlePropsMessage(msg, 'props');
 });
 
 /************ Initial load ************/
