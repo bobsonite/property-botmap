@@ -948,7 +948,7 @@ function drawProperty(p){
   })();
   const poiSummary  = p._amenityCounts ? makePopupPoiSummary(p._amenityCounts) : '';
   const linkHtml    = p.link
-    ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>`
+    ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Make a booking →</a></div>`
     : '';
 
   const html = `
@@ -1047,7 +1047,7 @@ function renderList(props){
       : '';
 
     const linkHtml = p.link
-      ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Open page →</a></div>`
+      ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Make a booking →</a></div>`
       : '';
 
     return `

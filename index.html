@@ -6,6 +6,22 @@
   <title>Student Housing — Bot + Map</title>
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
   <link href="./styles/app.css" rel="stylesheet" />
+
+  <style>
+    .site-footer {
+      position: sticky;
+      bottom: 0;
+      background: var(--panel-bg);
+      border-top: 1px solid var(--card-border);
+      font-size: 11px;
+      color: #777;
+      text-align: center;
+      padding: 8px 10px 10px;
+      margin-top: 8px;
+      opacity: 0.9;
+      z-index: 1;
+    }
+  </style>
 </head>
 <body>
   <div class="wrap">
@@ -58,6 +74,9 @@
       <div id="detailPanel" class="detail-panel" hidden></div>
       <!-- Cards render beneath -->
       <div id="cardsMount"></div>
+      <div class="site-footer">
+        Images belong to their respective owners and are displayed via original source URLs.
+      </div>
     </aside>
 
     <!-- Mobile FABs -->
