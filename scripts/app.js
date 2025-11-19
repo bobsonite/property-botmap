@@ -517,48 +517,76 @@ async function fetchAllProps(){
   return out;
 }
 
-async function fetchPOIsForProps(propIDs, { types=['cafe','bar','restaurant','gym','park'], perTypeLimit=8, radiusMeters=800 } = {}, centersByProp = new Map()){
-  if (!propIDs?.length) return { list:[], counts:new Map() };
+// POIs now come from "google_points" which already has lat/long per place
+async function fetchPOIsForProps(
+  propIDs,
+  { types = ['cafe', 'bar', 'restaurant', 'gym', 'park'], perTypeLimit = 8, radiusMeters = 800 } = {},
+  centersByProp = new Map()
+) {
+  if (!propIDs?.length) return { list: [], counts: new Map() };
 
   const { data, error } = await supabase
-    .from('Places_final')
-    .select('UID, name, Address, type_single, propID')
-    .in('propID', propIDs.map(String))
+    .from('google_points')
+    .select('uid, name, address, type_single, propid, lat, long, rating')
+    .in('propid', propIDs.map(String))
     .limit(2000);
-  if (error) { console.error('[supabase] Places_final error', error); return { list:[], counts:new Map() }; }
 
-  const want = new Set(types.map(t => String(t).toLowerCase()));
+  if (error) {
+    console.error('[supabase] google_points error', error);
+    return { list: [], counts: new Map() };
+  }
+
+  const want    = new Set(types.map(t => String(t).toLowerCase()));
   const perType = new Map();
-  const counts = new Map();
-  const list = [];
+  const counts  = new Map();
+  const list    = [];
 
-  for (const r of data){
-    const t = String(r.type_single||'').toLowerCase();
+  for (const r of data || []) {
+    const t = String(r.type_single || '').toLowerCase();
     if (types.length && !want.has(t)) continue;
 
-    const g = await geocodeAddress(r.Address);
-    if (!g) continue;
+    const pid = String(r.propid);
+    if (!pid) continue;
 
-    const center = centersByProp.get(String(r.propID));
-    const d = center ? metersBetween(center, g) : null;
-    if (center && d!=null && d > radiusMeters) continue;
+    const lat = Number(r.lat);
+    const lon = Number(r.long);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
-    const pid = String(r.propID);
-    if (!counts.has(pid)) counts.set(pid, { cafe:0, bar:0, restaurant:0, gym:0, park:0 });
+    // Distance filter using stored coords
+    const center = centersByProp.get(pid);
+    const d      = center ? metersBetween(center, { lat, lon }) : null;
+    if (center && d != null && d > radiusMeters) continue;
+
+    // Per-property POI type counts (for chips + popup summary)
+    if (!counts.has(pid)) {
+      counts.set(pid, { cafe: 0, bar: 0, restaurant: 0, gym: 0, park: 0 });
+    }
     const bucket = counts.get(pid);
-    if (t.includes('cafe') || t.includes('coffee')) bucket.cafe++;
-    else if (t.includes('bar') || t.includes('pub')) bucket.bar++;
+    if (t.includes('cafe') || t.includes('coffee'))         bucket.cafe++;
+    else if (t.includes('bar') || t.includes('pub'))        bucket.bar++;
     else if (t.includes('restaurant') || t.includes('food')) bucket.restaurant++;
-    else if (t.includes('gym')) bucket.gym++;
-    else if (t.includes('park')) bucket.park++;
+    else if (t.includes('gym'))                             bucket.gym++;
+    else if (t.includes('park'))                            bucket.park++;
 
+    // Limit how many individual markers we draw per type (for performance)
     const used = perType.get(t) || 0;
-    if (used < perTypeLimit){
-      list.push({ id:r.UID, name:r.name, address:r.Address, type:r.type_single, propID:r.propID, lat:g.lat, lon:g.lon, _distance_m:d!=null?Math.round(d):null });
-      perType.set(t, used+1);
+    if (used < perTypeLimit) {
+      list.push({
+        id:        r.uid || `${pid}-${t}-${used}`,
+        name:      r.name,
+        address:   r.address,
+        type:      r.type_single,
+        propID:    r.propid,
+        lat,
+        lon,
+        rating:    r.rating,
+        _distance_m: d != null ? Math.round(d) : null
+      });
+      perType.set(t, used + 1);
     }
   }
-  list.sort((a,b)=> (a._distance_m??1e12) - (b._distance_m??1e12));
+
+  list.sort((a, b) => (a._distance_m ?? 1e12) - (b._distance_m ?? 1e12));
   return { list, counts };
 }
 
