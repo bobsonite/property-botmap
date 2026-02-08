@@ -477,40 +477,72 @@ async function fetchUniDataForProps(propIDs){
 
 /************ Data fetchers ************/
 async function fetchPropsByIds(propIDs){
-  if (!Array.isArray(propIDs) || !propIDs.length) return [];
+  console.group("🔍 [DEBUG] fetchPropsByIds");
+  console.log("Requested IDs:", propIDs);
+
+  if (!Array.isArray(propIDs) || !propIDs.length) {
+    console.warn("No IDs provided.");
+    console.groupEnd();
+    return [];
+  }
   
-  // FIX: Query 'propid' (lowercase) AND 'address' (correct spelling)
+  // 1. Query DB
   const { data, error } = await supabase
     .from('test_prop')
     .select('propid, property, city, address, Long, Lat, link, owner, property_description')
     .in('propid', propIDs.map(String));
 
-  if (error) { console.error('[supabase] test_prop error', error); return []; }
+  if (error) { 
+    console.error("❌ Supabase Error:", error); 
+    console.groupEnd();
+    return []; 
+  }
+
+  // 2. Analyze what was found vs missing
+  const foundIds = (data || []).map(r => r.propid);
+  const missingIds = propIDs.filter(id => !foundIds.includes(id));
+  
+  console.log(`DB returned ${data.length} rows.`);
+  if (missingIds.length > 0) {
+    console.warn("⚠️ MISSING from Database (Check spelling/case):", missingIds);
+  } else {
+    console.log("✅ All requested IDs found in Database.");
+  }
 
   const out = [];
   for (const r of data){
     let lat = r.Lat ?? null;
     let lon = r.Long ?? null;
     
-    // Geocoding fallback: use r.address (the new column)
-    if (lat==null || lon==null){
+    // 3. Check Coordinates
+    if (lat == null || lon == null){
+      console.log(`📍 Coordinates missing for '${r.propid}', attempting geocode...`);
       const q = r.address || `${r.property||''}, ${r.city||''}, UK`;
       const g = await geocodeAddress(q);
-      if (g){ lat=g.lat; lon=g.lon; }
+      if (g){ 
+        lat = g.lat; lon = g.lon; 
+        console.log(`   -> Geocode success: ${lat}, ${lon}`);
+      } else {
+        console.error(`❌ Geocode FAILED for '${r.propid}'. Address: ${q}`);
+      }
     }
-    if (lat==null || lon==null) continue;
+    
+    if (lat == null || lon == null) {
+      console.warn(`⚠️ SKIPPING '${r.propid}' - No Lat/Long available.`);
+      continue;
+    }
 
     out.push({ 
       ...r, 
-      // CRITICAL MAPPINGS: 
-      // 1. DB 'propid' -> JS 'propID'
       propID: r.propid,
-      // 2. DB 'address' -> JS 'adress' (keeps your UI working without other changes)
       adress: r.address,
       lat, 
       lon 
     });
   }
+
+  console.log(`Returning ${out.length} valid properties to map.`);
+  console.groupEnd();
   return out;
 }
 
@@ -1316,71 +1348,40 @@ function parsePropIDs(raw){
 }
 
 async function handlePropsMessage(msg, channelName){
-  // 1) See exactly what is coming from Ably
-  console.log('[ABLY RAW MESSAGE]', 'channel =', channelName, msg);
+  console.group("📡 [DEBUG] Ably Message Received");
+  console.log("Channel:", channelName);
+  console.log("Raw Message:", msg);
 
-  // 2) Be defensive about nesting:
-  //    - msg.data = { propIDs, session_id, trigger }
-  //    - msg.data = { data: { propIDs, session_id, page_session_id } }
   const root = msg?.data || {};
-  const data = (root && root.data &&
-                root.propIDs === undefined &&
-                root.session_id === undefined &&
-                root.page_session_id === undefined)
-    ? root.data
-    : root;
+  const data = (root && root.data && root.propIDs === undefined) ? root.data : root;
 
-  console.log('[ABLY EFFECTIVE DATA]',
-    data,
-    'pageSessionId =', pageSessionId,
-    'sessionId =', sessionId,
-    'channel =', channelName
-  );
+  // 1. Debug Session ID logic
+  const msgSession = data.page_session_id || data.session_id || null;
+  console.log("Message Session ID:", msgSession);
+  console.log("My Local Session ID:", pageSessionId);
 
-  // 3) Session information from payload
-  const msgSession =
-    data.page_session_id ??
-    data.pageSessionId ??
-    data.session_id ??
-    data.sessionId ??
-    data.sessionID ??
-    null;
-
-  console.log(
-    '[ABLY] msgSession from payload =', msgSession,
-    'currently bound =', ablyBoundSession,
-    'local pageSessionId =', sessionId
-  );
-
-  // Bind once to whatever Ably sends us first, then ignore others
-  if (msgSession) {
-    if (!ablyBoundSession) {
-      ablyBoundSession = msgSession;
-      console.log('[ABLY] Binding this tab to Ably session', ablyBoundSession);
-    } else if (msgSession !== ablyBoundSession) {
-      console.log(
-        '[ABLY] Ignoring message for different Ably session',
-        msgSession, 'expected', ablyBoundSession, 'on channel', channelName
-      );
-      return;
-    }
-  }
-
-  // 4) Property IDs
-  const ids = parsePropIDs(data.propIDs);
-  console.log('[ABLY] Parsed propIDs from', channelName, ':', ids);
+  // 2. Debug ID Parsing
+  const rawIDs = data.propIDs;
+  const ids = parsePropIDs(rawIDs);
+  console.log("Raw propIDs:", rawIDs);
+  console.log("Parsed propIDs:", ids);
 
   if (!ids.length) {
-    console.warn('[ABLY] Message had no usable propIDs, skipping');
+    console.warn("⚠️ No IDs found in message.");
+    console.groupEnd();
     return;
   }
 
+  // 3. Clear and Fetch
   clearAllMarkers();
 
-  console.log('[ABLY] Fetching properties from Supabase for IDs', ids);
+  // Call our new debug-enhanced fetcher
   const props = await fetchPropsByIds(ids);
-  console.log('[ABLY] Supabase returned', props.length, 'properties');
 
+  // 4. Log final counts
+  console.log(`Ready to render ${props.length} properties.`);
+  
+  // ... (Rest of your existing logic for fetching POIs, Amenities, etc) ...
   const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
 
   const { counts } = await fetchPOIsForProps(
@@ -1407,12 +1408,10 @@ async function handlePropsMessage(msg, channelName){
     };
   });
 
-  console.log('[ABLY] baseProps now has', baseProps.length, 'properties; re-rendering');
-
-  // initial render (no filters applied yet)
   renderAmenityFilters();
-  applyFilters(); // will draw markers + list and sync POIs
-  drawCampusMarkers(); // campuses always visible when data available
+  applyFilters();
+  drawCampusMarkers();
+  console.groupEnd();
 }
 
 // Subscribe to shared "props" channel (backend now sends everything here)
