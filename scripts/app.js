@@ -478,46 +478,73 @@ async function fetchUniDataForProps(propIDs){
 /************ Data fetchers ************/
 async function fetchPropsByIds(propIDs){
   if (!Array.isArray(propIDs) || !propIDs.length) return [];
+  
+  // FIX: Query 'propid' (lowercase) instead of 'propID'
   const { data, error } = await supabase
     .from('test_prop')
-    .select('propID, property, city, adress, Long, Lat, link, owner, property_description')
-    .in('propID', propIDs.map(String));
+    .select('propid, property, city, adress, Long, Lat, link, owner, property_description')
+    .in('propid', propIDs.map(String)); // Ensure we search with strings
+
   if (error) { console.error('[supabase] test_prop error', error); return []; }
 
   const out = [];
   for (const r of data){
-    let lat = r.Lat ?? null, lon = r.Long ?? null;
+    // Use DB coordinates (Lat/Long capitalized in your CSV)
+    let lat = r.Lat ?? null;
+    let lon = r.Long ?? null;
+    
+    // Fallback to geocoding only if DB coords are missing
     if (lat==null || lon==null){
-      const g = await geocodeAddress(r.adress || `${r.property||''}, ${r.city||''}, UK`);
+      const q = r.adress || `${r.property||''}, ${r.city||''}, UK`;
+      const g = await geocodeAddress(q);
       if (g){ lat=g.lat; lon=g.lon; }
     }
     if (lat==null || lon==null) continue;
-    out.push({ ...r, lat, lon });
+
+    out.push({ 
+      ...r, 
+      // CRITICAL MAPPING: DB 'propid' -> JS 'propID'
+      propID: r.propid,
+      lat, 
+      lon 
+    });
   }
   return out;
 }
 
 async function fetchAllProps(){
+  // FIX: Query 'propid' (lowercase) instead of 'propID'
   const { data, error } = await supabase
     .from('test_prop')
-    .select('propID, property, city, adress, Long, Lat, link, owner, property_description')
+    .select('propid, property, city, adress, Long, Lat, link, owner, property_description')
     .limit(500);
+
   if (error) { console.error('[supabase] fetchAllProps error', error); return []; }
 
   const out = [];
   for (const r of data){
-    let lat = r.Lat ?? null, lon = r.Long ?? null;
+    let lat = r.Lat ?? null;
+    let lon = r.Long ?? null;
+    
     if (lat==null || lon==null){
-      const g = await geocodeAddress(r.adress || `${r.property||''}, ${r.city||''}, UK`);
+      const q = r.adress || `${r.property||''}, ${r.city||''}, UK`;
+      const g = await geocodeAddress(q);
       if (g){ lat=g.lat; lon=g.lon; }
     }
     if (lat==null || lon==null) continue;
-    out.push({ ...r, lat, lon });
+
+    out.push({ 
+      ...r, 
+      // CRITICAL MAPPING: DB 'propid' -> JS 'propID'
+      propID: r.propid,
+      lat, 
+      lon 
+    });
   }
   return out;
 }
 
-// POIs now come from "google_points" which already has lat/long per place
+// POIs (google_points)
 async function fetchPOIsForProps(
   propIDs,
   { types = ['cafe', 'bar', 'restaurant', 'gym', 'park'], perTypeLimit = 8, radiusMeters = 800 } = {},
@@ -552,12 +579,10 @@ async function fetchPOIsForProps(
     const lon = Number(r.long);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
-    // Distance filter using stored coords
     const center = centersByProp.get(pid);
     const d      = center ? metersBetween(center, { lat, lon }) : null;
     if (center && d != null && d > radiusMeters) continue;
 
-    // Per-property POI type counts (for chips + popup summary)
     if (!counts.has(pid)) {
       counts.set(pid, { cafe: 0, bar: 0, restaurant: 0, gym: 0, park: 0 });
     }
@@ -568,7 +593,6 @@ async function fetchPOIsForProps(
     else if (t.includes('gym'))                             bucket.gym++;
     else if (t.includes('park'))                            bucket.park++;
 
-    // Limit how many individual markers we draw per type (for performance)
     const used = perType.get(t) || 0;
     if (used < perTypeLimit) {
       list.push({
@@ -590,41 +614,34 @@ async function fetchPOIsForProps(
   return { list, counts };
 }
 
-// amenities + services
+// amenities + services (Ignoring services for now)
 async function fetchAmenAndServices(propIDs){
   const ids = (propIDs||[]).map(String);
   const byProp = new Map(ids.map(id => [id, { amen:[], serv:[] }]));
 
-  // amenities
+  // 1. Amenities (using 'propid')
   {
     const { data, error } = await supabase
       .from('amenities')
-      .select('property_id, propid, Amenity')
-      .in('property_id', ids)
+      .select('propid, Amenity')
+      .in('propid', ids)
       .limit(5000);
-    const rows = (!error && data?.length) ? data : (await supabase
-      .from('amenities').select('propid, Amenity').in('propid', ids).limit(5000)).data || [];
+
+    const rows = (!error && data?.length) ? data : [];
     for (const r of rows){
-      const pid = String(r.property_id ?? r.propid ?? '');
+      const pid = String(r.propid || '').trim();
       const label = String(r.Amenity || '').trim();
       if (byProp.has(pid) && label) byProp.get(pid).amen.push(label);
     }
   }
-  // services
+
+  // 2. Services (DISABLED to prevent crash due to ID format mismatch)
+  // We will re-enable this once the services table is updated to use string IDs
+  /*
   {
-    const { data, error } = await supabase
-      .from('services')
-      .select('property_id, propid, service')
-      .in('property_id', ids)
-      .limit(5000);
-    const rows = (!error && data?.length) ? data : (await supabase
-      .from('services').select('propid, service').in('propid', ids).limit(5000)).data || [];
-    for (const r of rows){
-      const pid = String(r.property_id ?? r.propid ?? '');
-      const label = String(r.service || '').trim();
-      if (byProp.has(pid) && label) byProp.get(pid).serv.push(label);
-    }
+    const { data, error } = await supabase.from('services')...
   }
+  */
 
   // Dedup per property (by label), map to icon
   const result = new Map();
@@ -637,7 +654,7 @@ async function fetchAmenAndServices(propIDs){
   return result;
 }
 
-// gallery
+// gallery (using 'propid')
 async function fetchGallery(propIDs){
   if (!propIDs?.length) return new Map();
   const { data, error } = await supabase
@@ -645,7 +662,9 @@ async function fetchGallery(propIDs){
     .select('propid, image_url, image_order')
     .in('propid', propIDs.map(String))
     .limit(10000);
+
   if (error){ console.error('[supabase] gallery error', error); return new Map(); }
+  
   const by = new Map();
   for (const r of data){
     const pid = String(r.propid);
@@ -663,8 +682,7 @@ async function fetchRooms(propIDs){
   const ids = (propIDs || []).map(String);
   if (!ids.length) return new Map();
 
-  // Table: "room_price"
-  // Columns: "room_type", "price_per_week", "available", "tenure", "propid"
+  // Query 'room_price' using 'propid'
   const { data, error } = await supabase
     .from('room_price')
     .select('room_type, price_per_week, available, tenure, propid')
@@ -681,9 +699,14 @@ async function fetchRooms(propIDs){
     const pid = String(r.propid);
     if (!pid) continue;
     if (!by.has(pid)) by.set(pid, []);
+    
+    // Ensure price is a number
+    let price = r.price_per_week;
+    if (typeof price === 'string') price = parseFloat(price.replace(/[^0-9.]/g, ''));
+
     by.get(pid).push({
       room_type:      r.room_type || '',
-      price_per_week: (r.price_per_week != null ? Number(r.price_per_week) : null),
+      price_per_week: (Number.isFinite(price) ? price : null),
       available:      r.available,
       tenure:         (r.tenure != null ? Number(r.tenure) : null)
     });
