@@ -1350,38 +1350,39 @@ function parsePropIDs(raw){
 async function handlePropsMessage(msg, channelName){
   console.group("📡 [DEBUG] Ably Message Received");
   console.log("Channel:", channelName);
-  console.log("Raw Message:", msg);
-
+  
   const root = msg?.data || {};
-  const data = (root && root.data && root.propIDs === undefined) ? root.data : root;
+  const data = (root && root.data && root.propIDs === undefined && root.propid === undefined) ? root.data : root;
 
-  // 1. Debug Session ID logic
-  const msgSession = data.page_session_id || data.session_id || null;
-  console.log("Message Session ID:", msgSession);
-  console.log("My Local Session ID:", pageSessionId);
+  console.log("Payload:", data);
 
-  // 2. Debug ID Parsing
-  const rawIDs = data.propIDs;
+  // FIX: Look for 'propIDs' (camelCase) OR 'propid' (lowercase) OR 'prop_id' (snake_case)
+  // This makes the code robust regardless of what format n8n sends.
+  const rawIDs = data.propIDs || data.propid || data.prop_id;
+  
   const ids = parsePropIDs(rawIDs);
-  console.log("Raw propIDs:", rawIDs);
-  console.log("Parsed propIDs:", ids);
+  
+  console.log("Raw IDs found:", rawIDs);
+  console.log("Cleaned IDs:", ids);
 
-  if (!ids.length) {
-    console.warn("⚠️ No IDs found in message.");
+  // 2. SAFETY CHECK: If no IDs, STOP. Do NOT clear the map.
+  if (!ids || ids.length === 0) {
+    console.warn("⚠️ Received message with NO valid Property IDs.");
+    console.warn("   -> Action: Keeping previous map pins (refusing to clear map).");
     console.groupEnd();
-    return;
+    return; 
   }
 
-  // 3. Clear and Fetch
+  // 3. Only now do we clear the old markers
+  console.log("✅ Valid IDs received. Updating map...");
   clearAllMarkers();
 
-  // Call our new debug-enhanced fetcher
+  // 4. Fetch and Render
   const props = await fetchPropsByIds(ids);
-
-  // 4. Log final counts
-  console.log(`Ready to render ${props.length} properties.`);
   
-  // ... (Rest of your existing logic for fetching POIs, Amenities, etc) ...
+  // Log the result for confirmation
+  console.log(`Supabase returned ${props.length} valid rows for the map.`);
+
   const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
 
   const { counts } = await fetchPOIsForProps(
