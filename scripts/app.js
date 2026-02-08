@@ -475,92 +475,24 @@ async function fetchUniDataForProps(propIDs){
   return { campuses, nearestByProp };
 }
 
-/************ Data fetchers ************/
+/************ Data fetchers (Using ably_code) ************/
 async function fetchPropsByIds(propIDs){
-  console.group("🔍 [DEBUG] fetchPropsByIds");
-  console.log("Requested IDs:", propIDs);
-
-  if (!Array.isArray(propIDs) || !propIDs.length) {
-    console.warn("No IDs provided.");
-    console.groupEnd();
-    return [];
-  }
+  if (!Array.isArray(propIDs) || !propIDs.length) return [];
   
-  // 1. Query DB
+  // UPDATED: Querying test_prop using 'ably_code'
   const { data, error } = await supabase
     .from('test_prop')
-    .select('propid, property, city, address, Long, Lat, link, owner, property_description')
-    .in('propid', propIDs.map(String));
+    .select('ably_code, propid, property, city, address, Long, Lat, link, owner, property_description')
+    .in('ably_code', propIDs.map(String)); // We search by the new code
 
-  if (error) { 
-    console.error("❌ Supabase Error:", error); 
-    console.groupEnd();
-    return []; 
-  }
-
-  // 2. Analyze what was found vs missing
-  const foundIds = (data || []).map(r => r.propid);
-  const missingIds = propIDs.filter(id => !foundIds.includes(id));
-  
-  console.log(`DB returned ${data.length} rows.`);
-  if (missingIds.length > 0) {
-    console.warn("⚠️ MISSING from Database (Check spelling/case):", missingIds);
-  } else {
-    console.log("✅ All requested IDs found in Database.");
-  }
+  if (error) { console.error('[supabase] test_prop error', error); return []; }
 
   const out = [];
   for (const r of data){
     let lat = r.Lat ?? null;
     let lon = r.Long ?? null;
     
-    // 3. Check Coordinates
-    if (lat == null || lon == null){
-      console.log(`📍 Coordinates missing for '${r.propid}', attempting geocode...`);
-      const q = r.address || `${r.property||''}, ${r.city||''}, UK`;
-      const g = await geocodeAddress(q);
-      if (g){ 
-        lat = g.lat; lon = g.lon; 
-        console.log(`   -> Geocode success: ${lat}, ${lon}`);
-      } else {
-        console.error(`❌ Geocode FAILED for '${r.propid}'. Address: ${q}`);
-      }
-    }
-    
-    if (lat == null || lon == null) {
-      console.warn(`⚠️ SKIPPING '${r.propid}' - No Lat/Long available.`);
-      continue;
-    }
-
-    out.push({ 
-      ...r, 
-      propID: r.propid,
-      adress: r.address,
-      lat, 
-      lon 
-    });
-  }
-
-  console.log(`Returning ${out.length} valid properties to map.`);
-  console.groupEnd();
-  return out;
-}
-
-async function fetchAllProps(){
-  // FIX: Query 'propid' (lowercase) AND 'address' (correct spelling)
-  const { data, error } = await supabase
-    .from('test_prop')
-    .select('propid, property, city, address, Long, Lat, link, owner, property_description')
-    .limit(500);
-
-  if (error) { console.error('[supabase] fetchAllProps error', error); return []; }
-
-  const out = [];
-  for (const r of data){
-    let lat = r.Lat ?? null;
-    let lon = r.Long ?? null;
-    
-    // Geocoding fallback: use r.address
+    // Geocoding fallback
     if (lat==null || lon==null){
       const q = r.address || `${r.property||''}, ${r.city||''}, UK`;
       const g = await geocodeAddress(q);
@@ -570,8 +502,11 @@ async function fetchAllProps(){
 
     out.push({ 
       ...r, 
-      // CRITICAL MAPPINGS:
-      propID: r.propid,
+      // CRITICAL MAPPING:
+      // The rest of the app expects 'propID'. We now map 'ably_code' to it.
+      propID: r.ably_code, 
+      // Keep the old propid available just in case we need it for joins later
+      _legacy_propid: r.propid, 
       adress: r.address,
       lat, 
       lon 
@@ -580,7 +515,40 @@ async function fetchAllProps(){
   return out;
 }
 
-// POIs (google_points)
+async function fetchAllProps(){
+  // UPDATED: Querying test_prop using 'ably_code'
+  const { data, error } = await supabase
+    .from('test_prop')
+    .select('ably_code, propid, property, city, address, Long, Lat, link, owner, property_description')
+    .limit(500);
+
+  if (error) { console.error('[supabase] fetchAllProps error', error); return []; }
+
+  const out = [];
+  for (const r of data){
+    let lat = r.Lat ?? null;
+    let lon = r.Long ?? null;
+    
+    if (lat==null || lon==null){
+      const q = r.address || `${r.property||''}, ${r.city||''}, UK`;
+      const g = await geocodeAddress(q);
+      if (g){ lat=g.lat; lon=g.lon; }
+    }
+    if (lat==null || lon==null) continue;
+
+    out.push({ 
+      ...r, 
+      propID: r.ably_code, // Use ably_code as the main ID
+      _legacy_propid: r.propid,
+      adress: r.address,
+      lat, 
+      lon 
+    });
+  }
+  return out;
+}
+
+// POIs (Assumption: google_points now uses ably_code? If not, we might need to change this)
 async function fetchPOIsForProps(
   propIDs,
   { types = ['cafe', 'bar', 'restaurant', 'gym', 'park'], perTypeLimit = 8, radiusMeters = 800 } = {},
@@ -588,10 +556,12 @@ async function fetchPOIsForProps(
 ) {
   if (!propIDs?.length) return { list: [], counts: new Map() };
 
+  // Note: If google_points still uses the old ID, we would need to map them. 
+  // For now, I am assuming consistency with the new scheme.
   const { data, error } = await supabase
     .from('google_points')
     .select('uid, name, address, type_single, propid, lat, long, rating')
-    .in('propid', propIDs.map(String))
+    .in('propid', propIDs.map(String)) 
     .limit(2000);
 
   if (error) {
@@ -608,7 +578,8 @@ async function fetchPOIsForProps(
     const t = String(r.type_single || '').toLowerCase();
     if (types.length && !want.has(t)) continue;
 
-    const pid = String(r.propid);
+    // We assume 'propid' in this table now contains the ably_code
+    const pid = String(r.propid); 
     if (!pid) continue;
 
     const lat = Number(r.lat);
@@ -636,7 +607,7 @@ async function fetchPOIsForProps(
         name:      r.name,
         address:   r.address,
         type:      r.type_single,
-        propID:    r.propid,
+        propID:    pid,
         lat,
         lon,
         rating:    r.rating,
@@ -650,12 +621,12 @@ async function fetchPOIsForProps(
   return { list, counts };
 }
 
-// amenities + services (services ignored to prevent crash)
+// amenities + services
 async function fetchAmenAndServices(propIDs){
   const ids = (propIDs||[]).map(String);
   const byProp = new Map(ids.map(id => [id, { amen:[], serv:[] }]));
 
-  // 1. Amenities (using 'propid')
+  // 1. Amenities (Assuming 'propid' column in amenities table now holds ably_code)
   {
     const { data, error } = await supabase
       .from('amenities')
@@ -672,14 +643,12 @@ async function fetchAmenAndServices(propIDs){
   }
 
   // 2. Services (DISABLED)
-  // ignored until IDs are updated in DB
   /*
   {
     const { data, error } = await supabase.from('services')...
   }
   */
 
-  // Dedup per property (by label), map to icon
   const result = new Map();
   for (const [pid, {amen, serv}] of byProp.entries()){
     const uniq = (arr)=> [...new Map(arr.map(s => [s.toLowerCase(), s])).values()];
@@ -690,9 +659,10 @@ async function fetchAmenAndServices(propIDs){
   return result;
 }
 
-// gallery (using 'propid')
+// gallery
 async function fetchGallery(propIDs){
   if (!propIDs?.length) return new Map();
+  // Assuming 'propid' column in gallery now holds ably_code
   const { data, error } = await supabase
     .from('gallery')
     .select('propid, image_url, image_order')
@@ -718,7 +688,7 @@ async function fetchRooms(propIDs){
   const ids = (propIDs || []).map(String);
   if (!ids.length) return new Map();
 
-  // Query 'room_price' using 'propid'
+  // Assuming 'propid' column in room_price now holds ably_code
   const { data, error } = await supabase
     .from('room_price')
     .select('room_type, price_per_week, available, tenure, propid')
@@ -736,7 +706,6 @@ async function fetchRooms(propIDs){
     if (!pid) continue;
     if (!by.has(pid)) by.set(pid, []);
     
-    // Ensure price is a number
     let price = r.price_per_week;
     if (typeof price === 'string') price = parseFloat(price.replace(/[^0-9.]/g, ''));
 
