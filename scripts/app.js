@@ -1348,48 +1348,35 @@ function parsePropIDs(raw){
 }
 
 async function handlePropsMessage(msg, channelName){
-  console.group("📡 [DEBUG] Ably Message Received");
-  console.log("Channel:", channelName);
-  
+  // 🚨 TRAP LOG: Verify exactly what Ably is sending
+  console.log("🚨 RAW ABLY PAYLOAD:", JSON.stringify(msg.data, null, 2));
+
+  console.group("📡 [DEBUG] Ably Message Processing");
   const root = msg?.data || {};
   const data = (root && root.data && root.propIDs === undefined && root.propid === undefined) ? root.data : root;
 
-  console.log("Payload:", data);
-
-  // FIX: Look for 'propIDs' (camelCase) OR 'propid' (lowercase) OR 'prop_id' (snake_case)
-  // This makes the code robust regardless of what format n8n sends.
+  // Check for any variation of the ID key
   const rawIDs = data.propIDs || data.propid || data.prop_id;
-  
   const ids = parsePropIDs(rawIDs);
-  
-  console.log("Raw IDs found:", rawIDs);
-  console.log("Cleaned IDs:", ids);
 
-  // 2. SAFETY CHECK: If no IDs, STOP. Do NOT clear the map.
+  console.log("Parsed IDs:", ids);
+
   if (!ids || ids.length === 0) {
-    console.warn("⚠️ Received message with NO valid Property IDs.");
-    console.warn("   -> Action: Keeping previous map pins (refusing to clear map).");
+    console.warn("⚠️ Received message with NO IDs. Keeping current map.");
     console.groupEnd();
-    return; 
+    return;
   }
 
-  // 3. Only now do we clear the old markers
-  console.log("✅ Valid IDs received. Updating map...");
   clearAllMarkers();
 
-  // 4. Fetch and Render
+  // Use the Strict Fetcher (Current Version)
   const props = await fetchPropsByIds(ids);
   
-  // Log the result for confirmation
-  console.log(`Supabase returned ${props.length} valid rows for the map.`);
-
+  console.log(`Supabase returned ${props.length} rows for these IDs.`);
+  
   const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
-
-  const { counts } = await fetchPOIsForProps(
-    ids,
-    { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 },
-    centers
-  );
+  // ... rest of your existing logic ...
+  const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
   const uniData  = await fetchUniDataForProps(ids);
   const amenServ = await fetchAmenAndServices(ids);
   const gallery  = await fetchGallery(ids);
