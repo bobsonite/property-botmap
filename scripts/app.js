@@ -479,23 +479,22 @@ async function fetchUniDataForProps(propIDs){
 async function fetchPropsByIds(propIDs){
   if (!Array.isArray(propIDs) || !propIDs.length) return [];
   
-  // FIX: Query 'propid' (lowercase) instead of 'propID'
+  // FIX: Query 'propid' (lowercase) AND 'address' (correct spelling)
   const { data, error } = await supabase
     .from('test_prop')
-    .select('propid, property, city, adress, Long, Lat, link, owner, property_description')
-    .in('propid', propIDs.map(String)); // Ensure we search with strings
+    .select('propid, property, city, address, Long, Lat, link, owner, property_description')
+    .in('propid', propIDs.map(String));
 
   if (error) { console.error('[supabase] test_prop error', error); return []; }
 
   const out = [];
   for (const r of data){
-    // Use DB coordinates (Lat/Long capitalized in your CSV)
     let lat = r.Lat ?? null;
     let lon = r.Long ?? null;
     
-    // Fallback to geocoding only if DB coords are missing
+    // Geocoding fallback: use r.address (the new column)
     if (lat==null || lon==null){
-      const q = r.adress || `${r.property||''}, ${r.city||''}, UK`;
+      const q = r.address || `${r.property||''}, ${r.city||''}, UK`;
       const g = await geocodeAddress(q);
       if (g){ lat=g.lat; lon=g.lon; }
     }
@@ -503,8 +502,11 @@ async function fetchPropsByIds(propIDs){
 
     out.push({ 
       ...r, 
-      // CRITICAL MAPPING: DB 'propid' -> JS 'propID'
+      // CRITICAL MAPPINGS: 
+      // 1. DB 'propid' -> JS 'propID'
       propID: r.propid,
+      // 2. DB 'address' -> JS 'adress' (keeps your UI working without other changes)
+      adress: r.address,
       lat, 
       lon 
     });
@@ -513,10 +515,10 @@ async function fetchPropsByIds(propIDs){
 }
 
 async function fetchAllProps(){
-  // FIX: Query 'propid' (lowercase) instead of 'propID'
+  // FIX: Query 'propid' (lowercase) AND 'address' (correct spelling)
   const { data, error } = await supabase
     .from('test_prop')
-    .select('propid, property, city, adress, Long, Lat, link, owner, property_description')
+    .select('propid, property, city, address, Long, Lat, link, owner, property_description')
     .limit(500);
 
   if (error) { console.error('[supabase] fetchAllProps error', error); return []; }
@@ -526,8 +528,9 @@ async function fetchAllProps(){
     let lat = r.Lat ?? null;
     let lon = r.Long ?? null;
     
+    // Geocoding fallback: use r.address
     if (lat==null || lon==null){
-      const q = r.adress || `${r.property||''}, ${r.city||''}, UK`;
+      const q = r.address || `${r.property||''}, ${r.city||''}, UK`;
       const g = await geocodeAddress(q);
       if (g){ lat=g.lat; lon=g.lon; }
     }
@@ -535,8 +538,9 @@ async function fetchAllProps(){
 
     out.push({ 
       ...r, 
-      // CRITICAL MAPPING: DB 'propid' -> JS 'propID'
+      // CRITICAL MAPPINGS:
       propID: r.propid,
+      adress: r.address,
       lat, 
       lon 
     });
@@ -614,7 +618,7 @@ async function fetchPOIsForProps(
   return { list, counts };
 }
 
-// amenities + services (Ignoring services for now)
+// amenities + services (services ignored to prevent crash)
 async function fetchAmenAndServices(propIDs){
   const ids = (propIDs||[]).map(String);
   const byProp = new Map(ids.map(id => [id, { amen:[], serv:[] }]));
@@ -635,8 +639,8 @@ async function fetchAmenAndServices(propIDs){
     }
   }
 
-  // 2. Services (DISABLED to prevent crash due to ID format mismatch)
-  // We will re-enable this once the services table is updated to use string IDs
+  // 2. Services (DISABLED)
+  // ignored until IDs are updated in DB
   /*
   {
     const { data, error } = await supabase.from('services')...
