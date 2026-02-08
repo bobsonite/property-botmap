@@ -1081,7 +1081,7 @@ function renderList(props){
     return `
       <article class="card" data-id="${p.propID}">
         <button class="save-btn${savedOn}" data-id="${p.propID}" aria-label="Save property">❤</button>
-        <h3>${escapeHtml(p.property||'')}${p.owner ? ' · ' + escapeHtml(p.owner) : ''}</h3>
+        <h3>${escapeHtml(p.property||'')}</h3>
         <div class="meta">${metaCity}</div>
         ${addrHtml}
         ${galleryHtml(p.propID)}
