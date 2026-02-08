@@ -1348,48 +1348,46 @@ function parsePropIDs(raw){
 }
 
 async function handlePropsMessage(msg, channelName){
-  console.group("📡 [DEBUG] Ably Message Received");
-  console.log("Channel:", channelName);
-  
+  // 1. TRAP LOG (Keep this for now to debug the ID data)
+  console.log("🚨 RAW ABLY PAYLOAD:", JSON.stringify(msg.data, null, 2));
+
   const root = msg?.data || {};
   const data = (root && root.data && root.propIDs === undefined && root.propid === undefined) ? root.data : root;
 
-  console.log("Payload:", data);
-
-  // FIX: Look for 'propIDs' (camelCase) OR 'propid' (lowercase) OR 'prop_id' (snake_case)
-  // This makes the code robust regardless of what format n8n sends.
-  const rawIDs = data.propIDs || data.propid || data.prop_id;
+  // 2. SECURITY CHECK: Session Isolation
+  // We check if the message carries a session ID, and if so, does it match ours?
+  const msgSession = data.page_session_id || data.session_id || data.sessionId;
   
-  const ids = parsePropIDs(rawIDs);
-  
-  console.log("Raw IDs found:", rawIDs);
-  console.log("Cleaned IDs:", ids);
-
-  // 2. SAFETY CHECK: If no IDs, STOP. Do NOT clear the map.
-  if (!ids || ids.length === 0) {
-    console.warn("⚠️ Received message with NO valid Property IDs.");
-    console.warn("   -> Action: Keeping previous map pins (refusing to clear map).");
-    console.groupEnd();
-    return; 
+  // 'pageSessionId' is defined at the top of your file
+  if (msgSession && pageSessionId) {
+      if (String(msgSession).trim() !== String(pageSessionId).trim()) {
+          console.warn(`🛑 Ignoring message for different session: ${msgSession} (My session: ${pageSessionId})`);
+          return; // STOP here if the message isn't for us
+      }
   }
 
-  // 3. Only now do we clear the old markers
-  console.log("✅ Valid IDs received. Updating map...");
+  // 3. Extract IDs (Robust check for camelCase, lowercase, etc.)
+  const rawIDs = data.propIDs || data.propid || data.prop_id;
+  const ids = parsePropIDs(rawIDs);
+
+  console.log("Parsed IDs for my session:", ids);
+
+  if (!ids || ids.length === 0) {
+    console.warn("⚠️ Received message with NO valid Property IDs. Keeping current map.");
+    return;
+  }
+
+  // 4. Update the Map
   clearAllMarkers();
 
-  // 4. Fetch and Render
+  // Use the fetcher (make sure you are using the Fuzzy Match version of fetchPropsByIds!)
   const props = await fetchPropsByIds(ids);
   
-  // Log the result for confirmation
-  console.log(`Supabase returned ${props.length} valid rows for the map.`);
+  console.log(`Supabase returned ${props.length} rows.`);
 
   const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
 
-  const { counts } = await fetchPOIsForProps(
-    ids,
-    { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 },
-    centers
-  );
+  const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
   const uniData  = await fetchUniDataForProps(ids);
   const amenServ = await fetchAmenAndServices(ids);
   const gallery  = await fetchGallery(ids);
@@ -1412,7 +1410,6 @@ async function handlePropsMessage(msg, channelName){
   renderAmenityFilters();
   applyFilters();
   drawCampusMarkers();
-  console.groupEnd();
 }
 
 // Subscribe to shared "props" channel (backend now sends everything here)
