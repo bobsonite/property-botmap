@@ -1321,35 +1321,40 @@ async function handlePropsMessage(msg, channelName){
   console.log("🚨 RAW ABLY PAYLOAD:", JSON.stringify(msg.data, null, 2));
 
   const root = msg?.data || {};
-  const data = (root && root.data && root.propIDs === undefined && root.propid === undefined) ? root.data : root;
+  // Updated check to also look for ably_code in the root detection
+  const data = (root && root.data && 
+                root.propIDs === undefined && 
+                root.propid === undefined && 
+                root.ably_code === undefined) ? root.data : root;
 
   // 2. SECURITY CHECK: Session Isolation
-  // We check if the message carries a session ID, and if so, does it match ours?
   const msgSession = data.page_session_id || data.session_id || data.sessionId;
   
-  // 'pageSessionId' is defined at the top of your file
   if (msgSession && pageSessionId) {
       if (String(msgSession).trim() !== String(pageSessionId).trim()) {
           console.warn(`🛑 Ignoring message for different session: ${msgSession} (My session: ${pageSessionId})`);
-          return; // STOP here if the message isn't for us
+          return; 
       }
   }
 
-  // 3. Extract IDs (Robust check for camelCase, lowercase, etc.)
-  const rawIDs = data.propIDs || data.propid || data.prop_id;
+  // 3. Extract IDs (FIXED)
+  // We added 'data.ably_code' (and 'ablyCode' just in case) to the list of keys to check.
+  const rawIDs = data.propIDs || data.propid || data.prop_id || data.ably_code || data.ablyCode;
   const ids = parsePropIDs(rawIDs);
 
   console.log("Parsed IDs for my session:", ids);
 
   if (!ids || ids.length === 0) {
     console.warn("⚠️ Received message with NO valid Property IDs. Keeping current map.");
+    // Log the data object so you can see which key was actually sent
+    console.log("-> Data keys received:", Object.keys(data)); 
     return;
   }
 
   // 4. Update the Map
   clearAllMarkers();
 
-  // Use the fetcher (make sure you are using the Fuzzy Match version of fetchPropsByIds!)
+  // Use the fetcher (This will now query the test_prop table using the ably_code column)
   const props = await fetchPropsByIds(ids);
   
   console.log(`Supabase returned ${props.length} rows.`);
