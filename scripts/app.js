@@ -1324,40 +1324,33 @@ async function handlePropsMessage(msg, channelName){
   console.log("🚨 RAW ABLY PAYLOAD:", JSON.stringify(msg.data, null, 2));
 
   const root = msg?.data || {};
-  // Check for all possible ID keys (including ably_code)
   const data = (root && root.data && 
                 root.propIDs === undefined && 
                 root.propid === undefined && 
                 root.ably_code === undefined) ? root.data : root;
 
   // 2. AUTO-LOCK SESSION LOGIC
-  // We ignore the URL (pageSessionId) and trust the first message the Bot sends.
   const msgSession = data.page_session_id || data.session_id || data.sessionId;
   
   if (msgSession) {
       const incomingId = String(msgSession).trim();
       
       if (!lockedSessionId) {
-          // This is the FIRST message we've seen. Lock onto this ID!
           lockedSessionId = incomingId;
           console.log(`🔒 [Session] Map successfully auto-locked to Bot ID: ${lockedSessionId}`);
-          
-          // Optional: Update the UI to show the real ID
           const sidEl = document.getElementById('sid');
           if (sidEl) sidEl.textContent = lockedSessionId;
-          
       } else if (incomingId !== lockedSessionId) {
-          // We are already locked to a session, and this message is from someone else.
           console.warn(`🛑 Ignoring message for session ${incomingId}. Map is locked to ${lockedSessionId}.`);
-          return; // Stop here.
+          return; 
       }
   }
 
-  // 3. Extract IDs (Includes ably_code support)
+  // 3. Extract IDs (Ably Codes)
   const rawIDs = data.propIDs || data.propid || data.prop_id || data.ably_code || data.ablyCode;
   const ids = parsePropIDs(rawIDs);
 
-  console.log("Parsed IDs for map:", ids);
+  console.log("Parsed IDs (Ably Codes) for map:", ids);
 
   if (!ids || ids.length === 0) {
     console.warn("⚠️ Received message with NO valid Property IDs. Keeping current map.");
@@ -1367,30 +1360,59 @@ async function handlePropsMessage(msg, channelName){
   // 4. Update the Map
   clearAllMarkers();
 
-  // Use the fetcher (queries test_prop via ably_code)
+  // A. Fetch properties using the new Ably Code
   const props = await fetchPropsByIds(ids);
-  
   console.log(`Supabase returned ${props.length} rows.`);
+
+  // B. Extract Legacy IDs ('propid') to fetch related data (Gallery, etc)
+  const legacyIds = props.map(p => p._legacy_propid).filter(Boolean);
+  
+  // Use legacy IDs if available, otherwise fall back to main IDs (safety net)
+  const fetchIds = legacyIds.length > 0 ? legacyIds : ids;
 
   const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
 
-  const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
-  const uniData  = await fetchUniDataForProps(ids);
-  const amenServ = await fetchAmenAndServices(ids);
-  const gallery  = await fetchGallery(ids);
-  const rooms    = await fetchRooms(ids);
+  // C. Fetch related data using LEGACY IDs
+  const { counts } = await fetchPOIsForProps(fetchIds, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
+  const uniData  = await fetchUniDataForProps(fetchIds);
+  const amenServ = await fetchAmenAndServices(fetchIds);
+  const gallery  = await fetchGallery(fetchIds);
+  const rooms    = await fetchRooms(fetchIds);
 
-  amenityIndex = amenServ;
-  galleryIndex = gallery;
-  roomsIndex   = rooms;
-  uniIndex     = uniData;
+  // D. Helper to re-key maps from Legacy ID -> Ably Code
+  // This ensures the UI (which knows the property by Ably Code) can find the images/amenities
+  const rekeyMap = (sourceMap) => {
+      const newMap = new Map();
+      props.forEach(p => {
+          const legacyKey = String(p._legacy_propid);
+          const mainKey = String(p.propID); // The Ably Code
+          if (sourceMap.has(legacyKey)) {
+              newMap.set(mainKey, sourceMap.get(legacyKey));
+          } else if (sourceMap.has(mainKey)) {
+              // Fallback if data was actually keyed by Ably Code
+              newMap.set(mainKey, sourceMap.get(mainKey));
+          }
+      });
+      return newMap;
+  };
+
+  // E. Update global indexes with the re-keyed maps
+  amenityIndex = rekeyMap(amenServ);
+  galleryIndex = rekeyMap(gallery);
+  roomsIndex   = rekeyMap(rooms);
+  
+  // Uni Data is complex, we re-key the internal map
+  uniIndex = { campuses: uniData.campuses, nearestByProp: rekeyMap(uniData.nearestByProp) };
+  
+  // POI counts also need re-keying for the baseProps map
+  const rekeyedCounts = rekeyMap(counts);
 
   baseProps = props.map(p => {
     const pid = String(p.propID);
     return {
       ...p,
-      _amenityCounts: counts.get(pid) || null,
-      _nearestUni: uniData.nearestByProp.get(pid) || null
+      _amenityCounts: rekeyedCounts.get(pid) || null,
+      _nearestUni: uniIndex.nearestByProp.get(pid) || null
     };
   });
 
@@ -1416,6 +1438,7 @@ propsChannel.subscribe((msg) => {
 });
 
 /************ Initial load ************/
+/************ Initial load ************/
 async function bootstrap(){
   const props = await fetchAllProps();
   if (!props.length) {
@@ -1423,25 +1446,46 @@ async function bootstrap(){
     return;
   }
 
-  const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
-  const ids = props.map(p => String(p.propID));
-  const { counts } = await fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
-  const uniData  = await fetchUniDataForProps(ids);
-  const amenServ = await fetchAmenAndServices(ids);
-  const gallery  = await fetchGallery(ids);
-  const rooms    = await fetchRooms(ids);
+  // A. Extract Legacy IDs
+  const legacyIds = props.map(p => p._legacy_propid).filter(Boolean);
+  const fetchIds = legacyIds.length > 0 ? legacyIds : props.map(p => String(p.propID));
 
-  amenityIndex = amenServ;
-  galleryIndex = gallery;
-  roomsIndex   = rooms;
-  uniIndex     = uniData;
+  const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
+
+  // B. Fetch using Legacy IDs
+  const { counts } = await fetchPOIsForProps(fetchIds, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
+  const uniData  = await fetchUniDataForProps(fetchIds);
+  const amenServ = await fetchAmenAndServices(fetchIds);
+  const gallery  = await fetchGallery(fetchIds);
+  const rooms    = await fetchRooms(fetchIds);
+
+  // C. Re-key maps from Legacy ID -> Ably Code
+  const rekeyMap = (sourceMap) => {
+      const newMap = new Map();
+      props.forEach(p => {
+          const legacyKey = String(p._legacy_propid);
+          const mainKey = String(p.propID); 
+          if (sourceMap.has(legacyKey)) {
+              newMap.set(mainKey, sourceMap.get(legacyKey));
+          } else if (sourceMap.has(mainKey)) {
+              newMap.set(mainKey, sourceMap.get(mainKey));
+          }
+      });
+      return newMap;
+  };
+
+  amenityIndex = rekeyMap(amenServ);
+  galleryIndex = rekeyMap(gallery);
+  roomsIndex   = rekeyMap(rooms);
+  uniIndex     = { campuses: uniData.campuses, nearestByProp: rekeyMap(uniData.nearestByProp) };
+  const rekeyedCounts = rekeyMap(counts);
 
   baseProps = props.map(p => {
     const pid = String(p.propID);
     return {
       ...p,
-      _amenityCounts: counts.get(pid) || null,
-      _nearestUni: uniData.nearestByProp.get(pid) || null
+      _amenityCounts: rekeyedCounts.get(pid) || null,
+      _nearestUni: uniIndex.nearestByProp.get(pid) || null
     };
   });
 
