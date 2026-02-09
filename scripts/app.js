@@ -17,11 +17,10 @@ const newId = () =>
 
 const params = new URLSearchParams(location.search);
 
-// Prefer ?page_session_id=… but fall back to ?session_id=… for older links
-const rawPageSession = params.get('page_session_id') || params.get('session_id');
-const pageSessionId  = rawPageSession || newId();
+// CHANGE 1: Use 'let' so we can update it later when the bot loads
+let pageSessionId = params.get('page_session_id') || params.get('session_id') || newId();
 
-// Keep old name around so any existing code that uses `sessionId` still works
+// Keep old alias for any legacy references, but we rely on pageSessionId
 const sessionId = pageSessionId;
 
 const sidEl = document.getElementById('sid');
@@ -30,12 +29,31 @@ if (sidEl) sidEl.textContent = pageSessionId;
 // Debug: expose the session ID on window so we can poke it in DevTools
 window.pageSessionId = pageSessionId;
 
-new window.Landbot.Container({
+// Initialize Landbot and save reference to 'myLandbot'
+const myLandbot = new window.Landbot.Container({
   container: '#botPane',
   configUrl: LANDBOT_CONFIG_URL,
   variables: {
-    page_session_id: pageSessionId,   // <-- what Landbot/n8n will use
-    session_id:      pageSessionId    // <-- optional, for any existing Landbot logic
+    page_session_id: pageSessionId,
+    session_id:      pageSessionId
+  }
+});
+
+// CHANGE 2: Listen for the bot to load and sync the ID
+// This ensures that if the bot uses its own ID (like 508563740), the map adopts it.
+myLandbot.onLoad((data) => {
+  console.log("🤖 [Bot] Loaded. Data:", data);
+  
+  // Grab the bot's internal ID (customer ID or visitor ID)
+  const botId = data?.customer?.id || data?.visitor?.id;
+  
+  if (botId && String(botId) !== String(pageSessionId)) {
+    console.log(`🔀 [Session] Switching from ${pageSessionId} to Bot ID: ${botId}`);
+    pageSessionId = String(botId);
+    
+    // Update the debug UI
+    if (sidEl) sidEl.textContent = pageSessionId;
+    window.pageSessionId = pageSessionId;
   }
 });
 
