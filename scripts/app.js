@@ -416,7 +416,7 @@ async function fetchUniDataForProps(propIDs){
 
   const { data, error } = await supabase
     .from('university_distance_n8n')
-    .select('university, lat, long, time_walking_in_minutes, time_walking, time_transport, time_cycling, propid')
+    .select('university, lat, long, time_walking_in_minutes, time_transport, time_cycling, propid')
     .in('propid', ids);
 
   if (error || !data?.length){
@@ -443,8 +443,8 @@ async function fetchUniDataForProps(propIDs){
     }
     campus.propIDs.add(pid);
 
-    const walkSecs      = Number.isFinite(Number(r.time_walking))   ? Number(r.time_walking)   : null;
-    const walkMeters    = Number.isFinite(Number(r.distance_walking)) ? Math.round(Number(r.distance_walking)) : null;
+    const walkSecs      = Number.isFinite(Number(r.time_walking_in_minutes)) ? Number(r.time_walking_in_minutes) * 60 : null;
+    const walkMeters    = null; // Distance column is missing
     const cycleSecs     = Number.isFinite(Number(r.time_cycling))   ? Number(r.time_cycling)   : null;
     const transportSecs = Number.isFinite(Number(r.time_transport)) ? Number(r.time_transport) : null;
 
