@@ -416,7 +416,7 @@ async function fetchUniDataForProps(propIDs){
 
   const { data, error } = await supabase
     .from('university_distance_n8n')
-    .select('university, lat, long, distance_walking, time_walking, time_transport, time_cycling, propid')
+    .select('university, lat, long, time_walking_in_minutes, time_walking, time_transport, time_cycling, propid')
     .in('propid', ids);
 
   if (error || !data?.length){
@@ -691,7 +691,7 @@ async function fetchRooms(propIDs){
   // Assuming 'propid' column in room_price now holds ably_code
   const { data, error } = await supabase
     .from('room_price')
-    .select('room_type, price_per_week, available, tenure, propid')
+    .select('room_category, price_per_week, available, tenure, propid')
     .in('propid', ids)
     .limit(10000);
 
@@ -710,7 +710,7 @@ async function fetchRooms(propIDs){
     if (typeof price === 'string') price = parseFloat(price.replace(/[^0-9.]/g, ''));
 
     by.get(pid).push({
-      room_type:      r.room_type || '',
+      room_type:      r.room_category || '',
       price_per_week: (Number.isFinite(price) ? price : null),
       available:      r.available,
       tenure:         (r.tenure != null ? Number(r.tenure) : null)
