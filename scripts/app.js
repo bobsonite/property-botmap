@@ -17,10 +17,11 @@ const newId = () =>
 
 const params = new URLSearchParams(location.search);
 
-// CHANGE 1: Use 'let' so we can update it later when the bot loads
-let pageSessionId = params.get('page_session_id') || params.get('session_id') || newId();
+// Prefer ?page_session_id=… but fall back to ?session_id=… for older links
+const rawPageSession = params.get('page_session_id') || params.get('session_id');
+const pageSessionId  = rawPageSession || newId();
 
-// Keep old alias for any legacy references, but we rely on pageSessionId
+// Keep old name around so any existing code that uses `sessionId` still works
 const sessionId = pageSessionId;
 
 const sidEl = document.getElementById('sid');
@@ -29,31 +30,12 @@ if (sidEl) sidEl.textContent = pageSessionId;
 // Debug: expose the session ID on window so we can poke it in DevTools
 window.pageSessionId = pageSessionId;
 
-// Initialize Landbot and save reference to 'myLandbot'
-const myLandbot = new window.Landbot.Container({
+new window.Landbot.Container({
   container: '#botPane',
   configUrl: LANDBOT_CONFIG_URL,
   variables: {
-    page_session_id: pageSessionId,
-    session_id:      pageSessionId
-  }
-});
-
-// CHANGE 2: Listen for the bot to load and sync the ID
-// This ensures that if the bot uses its own ID (like 508563740), the map adopts it.
-myLandbot.onLoad((data) => {
-  console.log("🤖 [Bot] Loaded. Data:", data);
-  
-  // Grab the bot's internal ID (customer ID or visitor ID)
-  const botId = data?.customer?.id || data?.visitor?.id;
-  
-  if (botId && String(botId) !== String(pageSessionId)) {
-    console.log(`🔀 [Session] Switching from ${pageSessionId} to Bot ID: ${botId}`);
-    pageSessionId = String(botId);
-    
-    // Update the debug UI
-    if (sidEl) sidEl.textContent = pageSessionId;
-    window.pageSessionId = pageSessionId;
+    page_session_id: pageSessionId,   // <-- what Landbot/n8n will use
+    session_id:      pageSessionId    // <-- optional, for any existing Landbot logic
   }
 });
 
@@ -1324,6 +1306,9 @@ function applyFilters(){
 }
 
 /************ Ably subscription ************/
+// GLOBAL TRACKER: Keeps track of the session we are listening to
+let lockedSessionId = null;
+
 function parsePropIDs(raw){
   if (Array.isArray(raw)) return raw.map(v => String(v).trim()).filter(Boolean);
   if (typeof raw === 'string'){
@@ -1335,44 +1320,54 @@ function parsePropIDs(raw){
 }
 
 async function handlePropsMessage(msg, channelName){
-  // 1. TRAP LOG (Keep this for now to debug the ID data)
+  // 1. TRAP LOG
   console.log("🚨 RAW ABLY PAYLOAD:", JSON.stringify(msg.data, null, 2));
 
   const root = msg?.data || {};
-  // Updated check to also look for ably_code in the root detection
+  // Check for all possible ID keys (including ably_code)
   const data = (root && root.data && 
                 root.propIDs === undefined && 
                 root.propid === undefined && 
                 root.ably_code === undefined) ? root.data : root;
 
-  // 2. SECURITY CHECK: Session Isolation
+  // 2. AUTO-LOCK SESSION LOGIC
+  // We ignore the URL (pageSessionId) and trust the first message the Bot sends.
   const msgSession = data.page_session_id || data.session_id || data.sessionId;
   
-  if (msgSession && pageSessionId) {
-      if (String(msgSession).trim() !== String(pageSessionId).trim()) {
-          console.warn(`🛑 Ignoring message for different session: ${msgSession} (My session: ${pageSessionId})`);
-          return; 
+  if (msgSession) {
+      const incomingId = String(msgSession).trim();
+      
+      if (!lockedSessionId) {
+          // This is the FIRST message we've seen. Lock onto this ID!
+          lockedSessionId = incomingId;
+          console.log(`🔒 [Session] Map successfully auto-locked to Bot ID: ${lockedSessionId}`);
+          
+          // Optional: Update the UI to show the real ID
+          const sidEl = document.getElementById('sid');
+          if (sidEl) sidEl.textContent = lockedSessionId;
+          
+      } else if (incomingId !== lockedSessionId) {
+          // We are already locked to a session, and this message is from someone else.
+          console.warn(`🛑 Ignoring message for session ${incomingId}. Map is locked to ${lockedSessionId}.`);
+          return; // Stop here.
       }
   }
 
-  // 3. Extract IDs (FIXED)
-  // We added 'data.ably_code' (and 'ablyCode' just in case) to the list of keys to check.
+  // 3. Extract IDs (Includes ably_code support)
   const rawIDs = data.propIDs || data.propid || data.prop_id || data.ably_code || data.ablyCode;
   const ids = parsePropIDs(rawIDs);
 
-  console.log("Parsed IDs for my session:", ids);
+  console.log("Parsed IDs for map:", ids);
 
   if (!ids || ids.length === 0) {
     console.warn("⚠️ Received message with NO valid Property IDs. Keeping current map.");
-    // Log the data object so you can see which key was actually sent
-    console.log("-> Data keys received:", Object.keys(data)); 
     return;
   }
 
   // 4. Update the Map
   clearAllMarkers();
 
-  // Use the fetcher (This will now query the test_prop table using the ably_code column)
+  // Use the fetcher (queries test_prop via ably_code)
   const props = await fetchPropsByIds(ids);
   
   console.log(`Supabase returned ${props.length} rows.`);
