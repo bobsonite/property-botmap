@@ -201,7 +201,6 @@ const markersPOI   = new Map(); // UID   -> Marker
 const markersUni   = new Map(); // uniKey -> Marker
 
 let baseProps       = []; // raw from DB (with coords)
-let allLoadedProps  = []; // MASTER LIST: Holds all properties loaded at start (for Ghost Mode)
 let filteredProps   = []; // after filters, before viewport clip
 let currentProps    = []; // actually rendered (in current viewport)
 let amenityIndex    = new Map(); // pid -> { amen[], serv[] }
@@ -949,19 +948,6 @@ function drawProperty(p){
   const el = makePin('pin--prop','🏠');
   const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
 
-  // GHOST MODE STYLE - HIGH CONTRAST:
-  const isGhost = p._isHighlighted === false;
-
-  // Settings:
-  // Ghost: Very transparent (0.25), smaller size (0.85), grayscale, pushed to back (z-index 0).
-  // Active: Full opacity (1.0), larger size pop (1.2), normal color, brought to front (z-index 100).
-  el.style.opacity    = isGhost ? '0.25' : '1.0';
-  el.style.zIndex     = isGhost ? '0' : '100';
-  el.style.filter     = isGhost ? 'grayscale(100%) contrast(70%)' : 'none'; //Dull the ghosts further
-  el.style.transform  = isGhost ? 'scale(0.85)' : 'scale(1.2)'; // Size difference creates "pop"
-  // Add smooth transition for these properties
-  el.style.transition = 'opacity 0.3s, transform 0.3s, filter 0.3s';
-
   const ownerHtml   = p.owner ? `<div class="meta">${escapeHtml(p.owner)}</div>` : '';
   const addrHtml    = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
   const uniHtml     = (() => {
@@ -1010,7 +996,7 @@ function drawProperty(p){
 
   markersProp.set(id, marker);
 
-  // Hover logic
+  // Hover: highlight card + show property name as a tooltip (no more rings)
   const hoverLabel = p.property || 'Property';
   el.addEventListener('mouseenter', (e)=> {
     toggleCardHot(id, true);
@@ -1067,12 +1053,6 @@ function renderList(props){
     const metaCity  = p.city ? escapeHtml(p.city) : '';
     const addrHtml  = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
     const priceHtml = roomSummaryHtml(p.propID);
-    
-    // GHOST MODE STYLE:
-    // If highlighted, give it a light blue background.
-    // We add inline style here to avoid needing CSS file edits.
-    const cardStyle = p._isHighlighted ? 'style="background-color: #f0f9ff; border-left: 4px solid #007aff;"' : '';
-    
     const uniHtml   = (() => {
       const u = p._nearestUni;
       if (!u || !u.name) return '';
@@ -1099,7 +1079,7 @@ function renderList(props){
       : '';
 
     return `
-      <article class="card" data-id="${p.propID}" ${cardStyle}>
+      <article class="card" data-id="${p.propID}">
         <button class="save-btn${savedOn}" data-id="${p.propID}" aria-label="Save property">❤</button>
         <h3>${escapeHtml(p.property||'')}</h3>
         <div class="meta">${metaCity}</div>
@@ -1126,7 +1106,7 @@ function renderList(props){
     });
   });
 
-  // Card interactions
+  // Card interactions — highlight only (no rings here)
   cardsMount.querySelectorAll('.card').forEach(card => {
     const id = card.getAttribute('data-id');
     const row = () => currentProps.find(r => String(r.propID)===String(id));
@@ -1144,7 +1124,7 @@ function renderList(props){
     });
   });
 
-  // Read more buttons
+  // Read more / less toggles
   cardsMount.querySelectorAll('.read-more').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1154,6 +1134,7 @@ function renderList(props){
       if (!desc) return;
       const expanded = desc.classList.toggle('is-expanded');
       btn.textContent = expanded ? 'Read less' : 'Read more';
+      // Keep the expanded card fully visible
       scrollCardIntoView(card);
     });
   });
@@ -1353,9 +1334,10 @@ async function handlePropsMessage(msg, channelName){
   
   if (msgSession) {
       const incomingId = String(msgSession).trim();
+      
       if (!lockedSessionId) {
           lockedSessionId = incomingId;
-          console.log(`🔒 [Session] Map locked to Bot ID: ${lockedSessionId}`);
+          console.log(`🔒 [Session] Map successfully auto-locked to Bot ID: ${lockedSessionId}`);
           const sidEl = document.getElementById('sid');
           if (sidEl) sidEl.textContent = lockedSessionId;
       } else if (incomingId !== lockedSessionId) {
@@ -1364,68 +1346,79 @@ async function handlePropsMessage(msg, channelName){
       }
   }
 
-  // 3. Extract IDs
+  // 3. Extract IDs (Ably Codes)
   const rawIDs = data.propIDs || data.propid || data.prop_id || data.ably_code || data.ablyCode;
   const ids = parsePropIDs(rawIDs);
 
-  console.log("Parsed IDs for highlighting:", ids);
+  console.log("Parsed IDs (Ably Codes) for map:", ids);
 
   if (!ids || ids.length === 0) {
-    console.warn("⚠️ No IDs found in message.");
+    console.warn("⚠️ Received message with NO valid Property IDs. Keeping current map.");
     return;
   }
 
-  // 4. GHOST MODE LOGIC
-  // Instead of fetching new data, we filter the existing Master List.
-  if (allLoadedProps.length === 0) {
-      console.warn("⚠️ No properties loaded yet (Bootstrap hasn't finished or DB empty). Cannot highlight.");
-      return;
-  }
-
-  // A. Create a set for fast lookup
-  const activeSet = new Set(ids.map(id => String(id).toLowerCase().trim()));
-
-  // B. Mark properties as highlighted
-  // We map over allLoadedProps to create a fresh state
-  const updatedProps = allLoadedProps.map(p => {
-      // Check if this property ID matches any of the requested IDs
-      const pid = String(p.propID).toLowerCase();
-      // Also check legacy ID just in case
-      const legId = String(p._legacy_propid || '').toLowerCase();
-      
-      const isMatch = activeSet.has(pid) || activeSet.has(legId);
-      
-      return {
-          ...p,
-          _isHighlighted: isMatch // True if matched, False if ghost
-      };
-  });
-
-  // C. Sort: Highlighted items jump to the top
-  updatedProps.sort((a, b) => {
-      // If a is highlighted and b is not, a comes first (-1)
-      if (a._isHighlighted && !b._isHighlighted) return -1;
-      if (!a._isHighlighted && b._isHighlighted) return 1;
-      return 0; // Keep original order otherwise
-  });
-
-  console.log(`Updated ${updatedProps.length} properties. Found ${activeSet.size} matches.`);
-
-  // D. Update state and render
-  baseProps = updatedProps;
-  
-  // Clear map to redraw markers with correct opacity
+  // 4. Update the Map
   clearAllMarkers();
+
+  // A. Fetch properties using the new Ably Code
+  const props = await fetchPropsByIds(ids);
+  console.log(`Supabase returned ${props.length} rows.`);
+
+  // B. Extract Legacy IDs ('propid') to fetch related data (Gallery, etc)
+  const legacyIds = props.map(p => p._legacy_propid).filter(Boolean);
   
-  // Re-apply filters (this handles the rendering)
+  // Use legacy IDs if available, otherwise fall back to main IDs (safety net)
+  const fetchIds = legacyIds.length > 0 ? legacyIds : ids;
+
+  const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
+
+  // C. Fetch related data using LEGACY IDs
+  const { counts } = await fetchPOIsForProps(fetchIds, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
+  const uniData  = await fetchUniDataForProps(fetchIds);
+  const amenServ = await fetchAmenAndServices(fetchIds);
+  const gallery  = await fetchGallery(fetchIds);
+  const rooms    = await fetchRooms(fetchIds);
+
+  // D. Helper to re-key maps from Legacy ID -> Ably Code
+  // This ensures the UI (which knows the property by Ably Code) can find the images/amenities
+  const rekeyMap = (sourceMap) => {
+      const newMap = new Map();
+      props.forEach(p => {
+          const legacyKey = String(p._legacy_propid);
+          const mainKey = String(p.propID); // The Ably Code
+          if (sourceMap.has(legacyKey)) {
+              newMap.set(mainKey, sourceMap.get(legacyKey));
+          } else if (sourceMap.has(mainKey)) {
+              // Fallback if data was actually keyed by Ably Code
+              newMap.set(mainKey, sourceMap.get(mainKey));
+          }
+      });
+      return newMap;
+  };
+
+  // E. Update global indexes with the re-keyed maps
+  amenityIndex = rekeyMap(amenServ);
+  galleryIndex = rekeyMap(gallery);
+  roomsIndex   = rekeyMap(rooms);
+  
+  // Uni Data is complex, we re-key the internal map
+  uniIndex = { campuses: uniData.campuses, nearestByProp: rekeyMap(uniData.nearestByProp) };
+  
+  // POI counts also need re-keying for the baseProps map
+  const rekeyedCounts = rekeyMap(counts);
+
+  baseProps = props.map(p => {
+    const pid = String(p.propID);
+    return {
+      ...p,
+      _amenityCounts: rekeyedCounts.get(pid) || null,
+      _nearestUni: uniIndex.nearestByProp.get(pid) || null
+    };
+  });
+
+  renderAmenityFilters();
   applyFilters();
   drawCampusMarkers();
-  
-  // If we have matches, fly to the first one
-  const firstMatch = updatedProps.find(p => p._isHighlighted);
-  if (firstMatch) {
-      map.flyTo({ center:[firstMatch.lon, firstMatch.lat], zoom:13, duration:1000 });
-  }
 }
 
 // Subscribe to shared "props" channel (backend now sends everything here)
@@ -1492,13 +1485,9 @@ async function bootstrap(){
     return {
       ...p,
       _amenityCounts: rekeyedCounts.get(pid) || null,
-      _nearestUni: uniIndex.nearestByProp.get(pid) || null,
-      _isHighlighted: false // Default: No highlight
+      _nearestUni: uniIndex.nearestByProp.get(pid) || null
     };
   });
-
-  // SAVE MASTER LIST
-  allLoadedProps = [...baseProps];
 
   renderAmenityFilters();
   applyFilters();
