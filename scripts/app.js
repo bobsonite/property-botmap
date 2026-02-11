@@ -209,6 +209,7 @@ let galleryIndex    = new Map(); // pid -> [{url, order}]
 let roomsIndex      = new Map(); // pid -> [{ room_type, price_per_week, available, tenure }]
 let currentRingsGeo = null;
 let hideRingsTimer  = null;
+let hoverTimer      = null;
 
 let showPlaces       = false;
 let uniIndex         = null; // { campuses: Map, nearestByProp: Map }
@@ -1010,16 +1011,31 @@ function drawProperty(p){
 
   markersProp.set(id, marker);
 
-  // Hover logic
+  // Hover: highlight card + show property name as a tooltip (no more rings)
   const hoverLabel = p.property || 'Property';
+  
   el.addEventListener('mouseenter', (e)=> {
-    toggleCardHot(id, true);
+    // 1. Show tooltip immediately (so user knows what it is)
     showTip(hoverLabel, e.clientX, e.clientY);
+    
+    // 2. Clear any pending scroll from a previous pin to stop "queueing"
+    if (hoverTimer) clearTimeout(hoverTimer);
+
+    // 3. Wait 350ms before scrolling the panel. 
+    // If mouse leaves before this time, the scroll is cancelled.
+    hoverTimer = setTimeout(() => {
+        toggleCardHot(id, true);
+    }, 350);
   });
+
   el.addEventListener('mousemove', (e)=> {
     showTip(hoverLabel, e.clientX, e.clientY);
   });
+
   el.addEventListener('mouseleave', ()=> {
+    // Mouse left! Cancel the pending scroll timer immediately.
+    if (hoverTimer) clearTimeout(hoverTimer);
+    
     toggleCardHot(id, false);
     hideTip();
   });
