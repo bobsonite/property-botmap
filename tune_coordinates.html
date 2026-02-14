@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Golden Data Tuner</title>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
+    <style>
+        body { margin: 0; display: flex; height: 100vh; font-family: sans-serif; }
+        #map { flex-grow: 1; }
+        #sidebar { width: 350px; padding: 20px; background: #f8f9fa; border-left: 1px solid #ddd; overflow-y: auto; display: flex; flex-direction: column; }
+        .item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 13px; }
+        .item:hover { background: #e9ecef; }
+        .item strong { display: block; color: #333; }
+        .item span { color: #666; font-size: 11px; }
+        #output { margin-top: 20px; padding: 10px; height: 150px; font-family: monospace; font-size: 11px; border: 1px solid #ccc; width: 100%; box-sizing: border-box; }
+        button { padding: 10px; background: #2563eb; color: white; border: none; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
+        button:hover { background: #1d4ed8; }
+        h3 { margin-top: 0; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="sidebar">
+    <h3>📍 Golden Data Tuner</h3>
+    <p style="font-size:12px; color:#666;">Drag pins to correct location. Click "Generate" to get updated code.</p>
+    <div id="list" style="flex-grow: 1; overflow-y: auto;"></div>
+    <button onclick="generateCode()">GENERATE UPDATED JSON</button>
+    <textarea id="output" placeholder="Updated code will appear here..."></textarea>
+</div>
+
+<script>
+    // ⚠️ PASTE YOUR MAPBOX TOKEN HERE
+    mapboxgl.accessToken = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA'; 
+
+    // THE CURRENT DATA
+    let buildings = [
+            {
+        "university_id": "Bayes Business School",
+        "building_id": "bayes_main",
+        "name": "Bayes Business School",
+        "lat": 51.52205,
+        "long": -0.09036,
+        "subjects": "Business; Finance"
+    },
+    {
+        "university_id": "Brunel University London",
+        "building_id": "brunel_main",
+        "name": "Uxbridge Campus",
+        "lat": 51.53217,
+        "long": -0.47264,
+        "subjects": "Main Campus"
+    },
+    {
+        "university_id": "City, University of London",
+        "building_id": "city_main",
+        "name": "Northampton Square",
+        "lat": 51.52772,
+        "long": -0.10265,
+        "subjects": "Main Campus; Engineering"
+    },
+    {
+        "university_id": "City, University of London",
+        "building_id": "city_law",
+        "name": "The City Law School",
+        "lat": 51.52713,
+        "long": -0.10065,
+        "subjects": "Law"
+    },
+    {
+        "university_id": "Goldsmiths, University of London",
+        "building_id": "gold_main",
+        "name": "Richard Hoggart Building",
+        "lat": 51.47435,
+        "long": -0.03517,
+        "subjects": "Main Campus; Arts"
+    },
+    {
+        "university_id": "Imperial College London",
+        "building_id": "imperial_main",
+        "name": "Main Entrance (South Ken)",
+        "lat": 51.49888,
+        "long": -0.17464,
+        "subjects": "Main Campus"
+    },
+    {
+        "university_id": "Imperial College London",
+        "building_id": "imperial_skempton",
+        "name": "Skempton Building",
+        "lat": 51.4982,
+        "long": -0.17603,
+        "subjects": "Civil Engineering"
+    },
+    {
+        "university_id": "Imperial College London",
+        "building_id": "imperial_chemistry",
+        "name": "Chemistry Building",
+        "lat": 51.49962,
+        "long": -0.17809,
+        "subjects": "Chemistry"
+    },
+    {
+        "university_id": "Imperial College London",
+        "building_id": "imperial_fleming",
+        "name": "Sir Alexander Fleming Building",
+        "lat": 51.4977,
+        "long": -0.1767,
+        "subjects": "Medicine"
+    },
+    {
+        "university_id": "Imperial College London",
+        "building_id": "imperial_business",
+        "name": "Imperial College Business School",
+        "lat": 51.49934,
+        "long": -0.17477,
+        "subjects": "Business"
+    },
+    {
+        "university_id": "King's College London",
+        "building_id": "kcl_strand",
+        "name": "Strand Campus",
+        "lat": 51.51149,
+        "long": -0.11608,
+        "subjects": "Arts; Sciences; Law"
+    },
+    {
+        "university_id": "King's College London",
+        "building_id": "kcl_guys",
+        "name": "Guy's Campus",
+        "lat": 51.50338,
+        "long": -0.08767,
+        "subjects": "Medicine"
+    },
+    {
+        "university_id": "King's College London",
+        "building_id": "kcl_waterloo",
+        "name": "Franklin-Wilkins",
+        "lat": 51.5058,
+        "long": -0.11251,
+        "subjects": "Health; Life Sciences"
+    },
+    {
+        "university_id": "King's College London",
+        "building_id": "kcl_denmark",
+        "name": "Denmark Hill",
+        "lat": 51.46878,
+        "long": -0.09245,
+        "subjects": "Psychology; Neuroscience"
+    },
+    {
+        "university_id": "London School of Economics and Political Science (LSE)",
+        "building_id": "lse_old",
+        "name": "Old Building",
+        "lat": 51.51388,
+        "long": -0.11677,
+        "subjects": "Main Campus; Politics"
+    },
+    {
+        "university_id": "London School of Economics and Political Science (LSE)",
+        "building_id": "lse_centre",
+        "name": "Centre Building",
+        "lat": 51.51382,
+        "long": -0.11641,
+        "subjects": "Social Sciences"
+    },
+    {
+        "university_id": "London School of Economics and Political Science (LSE)",
+        "building_id": "lse_library",
+        "name": "LSE Library",
+        "lat": 51.51469,
+        "long": -0.11581,
+        "subjects": "Library"
+    },
+    {
+        "university_id": "London South Bank University",
+        "building_id": "lsbu_main",
+        "name": "Southwark Campus",
+        "lat": 51.49748,
+        "long": -0.10232,
+        "subjects": "Main Campus"
+    },
+    {
+        "university_id": "Middlesex University London",
+        "building_id": "mdx_main",
+        "name": "Hendon Campus",
+        "lat": 51.58973,
+        "long": -0.22945,
+        "subjects": "Main Campus"
+    },
+    {
+        "university_id": "Queen Mary University of London",
+        "building_id": "qmul_mile_end",
+        "name": "Mile End Campus",
+        "lat": 51.52371,
+        "long": -0.04074,
+        "subjects": "Main Campus; Science"
+    },
+    {
+        "university_id": "Queen Mary University of London",
+        "building_id": "qmul_whitechapel",
+        "name": "Whitechapel Campus",
+        "lat": 51.51824,
+        "long": -0.05835,
+        "subjects": "Medicine"
+    },
+    {
+        "university_id": "Regent’s University London",
+        "building_id": "regents_main",
+        "name": "Main Campus (Park)",
+        "lat": 51.52595,
+        "long": -0.15475,
+        "subjects": "Main Campus"
+    },
+    {
+        "university_id": "SOAS University of London",
+        "building_id": "soas_main",
+        "name": "Paul Webley Wing",
+        "lat": 51.52156,
+        "long": -0.1293,
+        "subjects": "Main Campus"
+    },
+    {
+        "university_id": "University College London (UCL)",
+        "building_id": "ucl_main",
+        "name": "Wilkins Building",
+        "lat": 51.52528,
+        "long": -0.13432,
+        "subjects": "Main Campus"
+    },
+    {
+        "university_id": "University College London (UCL)",
+        "building_id": "ucl_ioe",
+        "name": "Institute of Education",
+        "lat": 51.52305,
+        "long": -0.12827,
+        "subjects": "Education"
+    },
+    {
+        "university_id": "University College London (UCL)",
+        "building_id": "ucl_science",
+        "name": "Kathleen Lonsdale Building",
+        "lat": 51.5236,
+        "long": -0.1323,
+        "subjects": "Science"
+    },
+    {
+        "university_id": "University College London (UCL)",
+        "building_id": "ucl_ingold",
+        "name": "Christopher Ingold Building",
+        "lat": 51.52557,
+        "long": -0.1327,
+        "subjects": "Chemistry"
+    },
+    {
+        "university_id": "University College London (UCL)",
+        "building_id": "ucl_bartlett",
+        "name": "The Bartlett",
+        "lat": 51.52579,
+        "long": -0.13289,
+        "subjects": "Architecture"
+    },
+    {
+        "university_id": "University of Greenwich",
+        "building_id": "greenwich_main",
+        "name": "Greenwich Campus",
+        "lat": 51.48295,
+        "long": -0.00636,
+        "subjects": "Main Campus; Business"
+    },
+    {
+        "university_id": "University of Greenwich",
+        "building_id": "greenwich_avery",
+        "name": "Avery Hill Campus",
+        "lat": 51.44617,
+        "long": 0.07856,
+        "subjects": "Education; Health"
+    },
+    {
+        "university_id": "University of Westminster",
+        "building_id": "west_regent",
+        "name": "Regent Street Campus",
+        "lat": 51.51692,
+        "long": -0.14319,
+        "subjects": "Social Sciences"
+    },
+    {
+        "university_id": "University of Westminster",
+        "building_id": "west_marylebone",
+        "name": "Marylebone Campus",
+        "lat": 51.522,
+        "long": -0.15499,
+        "subjects": "Architecture; Business"
+    },
+    {
+        "university_id": "University of Westminster",
+        "building_id": "west_harrow",
+        "name": "Harrow Campus",
+        "lat": 51.57749,
+        "long": -0.32211,
+        "subjects": "Media; Arts"
+    },
+    {
+        "university_id": "University of the Arts London (UAL)",
+        "building_id": "ual_csm",
+        "name": "Central Saint Martins",
+        "lat": 51.53627,
+        "long": -0.12455,
+        "subjects": "Art; Fashion"
+    },
+    {
+        "university_id": "University of the Arts London (UAL)",
+        "building_id": "ual_lcc",
+        "name": "London College of Communication",
+        "lat": 51.49454,
+        "long": -0.10193,
+        "subjects": "Media"
+    },
+    {
+        "university_id": "University of the Arts London (UAL)",
+        "building_id": "ual_lcf",
+        "name": "London College of Fashion",
+        "lat": 51.54161,
+        "long": -0.01294,
+        "subjects": "Fashion"
+    },
+    {
+        "university_id": "University of the Arts London (UAL)",
+        "building_id": "ual_chelsea",
+        "name": "Chelsea College of Arts",
+        "lat": 51.49022,
+        "long": -0.12855,
+        "subjects": "Fine Art"
+    },
+    {
+        "university_id": "University of the Arts London (UAL)",
+        "building_id": "ual_wimbledon",
+        "name": "Wimbledon College of Arts",
+        "lat": 51.41329,
+        "long": -0.21182,
+        "subjects": "Theatre"
+    },
+    {
+        "university_id": "University of the Arts London (UAL)",
+        "building_id": "ual_camberwell",
+        "name": "Camberwell College of Arts",
+        "lat": 51.47427,
+        "long": -0.08041,
+        "subjects": "Design"
+    }
+];
+    const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/satellite-streets-v12', // Satellite view for precision
+        center: [-0.13400, 51.52460], // Start at UCL
+        zoom: 16
+    });
+
+    const listDiv = document.getElementById('list');
+    const markers = {};
+
+    buildings.forEach((b, index) => {
+        // Create Sidebar Item
+        const item = document.createElement('div');
+        item.className = 'item';
+        item.innerHTML = `<strong>${b.name}</strong><span>${b.university_id}</span>`;
+        item.onclick = () => {
+            map.flyTo({ center: [b.long, b.lat], zoom: 19 });
+        };
+        listDiv.appendChild(item);
+
+        // Create Draggable Marker
+        const marker = new mapboxgl.Marker({ draggable: true, color: '#ff0000' })
+            .setLngLat([b.long, b.lat])
+            .setPopup(new mapboxgl.Popup().setText(b.name))
+            .addTo(map);
+
+        marker.on('dragend', () => {
+            const lngLat = marker.getLngLat();
+            buildings[index].long = parseFloat(lngLat.lng.toFixed(5));
+            buildings[index].lat = parseFloat(lngLat.lat.toFixed(5));
+        });
+
+        markers[b.building_id] = marker;
+    });
+
+    function generateCode() {
+        const json = JSON.stringify(buildings, null, 4);
+        // Format it as JS variable
+        const code = `const GOLDEN_BUILDINGS = ${json};`;
+        document.getElementById('output').value = code;
+    }
+</script>
+
+</body>
+</html>

@@ -9,135 +9,7 @@ const STYLES = {
   streets:   'mapbox://styles/mapbox/streets-v12',
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12' // available via flag, not UI
 };
-
-// --- MASTER UNIVERSITY PINS (From your CSV) ---
-const UNI_MASTER_LOCATIONS = {
-  "University of Westminster":                              { lat: 51.5220, lon: -0.154574 },
-  "London School of Economics and Political Science (LSE)": { lat: 51.5141, lon: -0.116946 },
-  "Regent’s University London":                             { lat: 51.5257, lon: -0.155635 },
-  "King's College London":                                  { lat: 51.5116, lon: -0.116228 },
-  "London South Bank University":                           { lat: 51.4987, lon: -0.101747 },
-  "Middlesex University London":                            { lat: 51.5899, lon: -0.229002 },
-  "Imperial College London":                                { lat: 51.4993, lon: -0.179178 },
-  "Brunel University London":                               { lat: 51.5328, lon: -0.472836 },
-  "University of Greenwich":                                { lat: 51.4845, lon: -0.003979 },
-  "University of the Arts London (UAL)":                    { lat: 51.5178, lon: -0.116363 },
-  "Queen Mary University of London":                        { lat: 51.5246, lon: -0.040683 },
-  "Bayes Business School":                                  { lat: 51.5221, lon: -0.090396 },
-  "Goldsmiths, University of London":                       { lat: 51.4741, lon: -0.035375 },
-  "SOAS University of London":                              { lat: 51.5224, lon: -0.129234 },
-  "University College London (UCL)":                        { lat: 51.5236, lon: -0.132398 },
-  "City, University of London":                             { lat: 51.5279, lon: -0.103099 }
-};
 const USE_SATELLITE = false; // flip to true for satellite hybrid
-
-// --- NEW MODULE: Campus Polygon Manager ---
-const CampusManager = {
-  // We keep a set of what is currently LOADING to prevent double-fetching
-  loading: new Set(),
-
-  async load(map, uniKey) {
-    if (!uniKey) return;
-    
-    // Create the unique ID
-    const safeKey = uniKey.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-    const sourceId = `src-${safeKey}`;
-
-    // 1. CHECK MAPBOX DIRECTLY
-    // If Mapbox already has this source, we are done. Stop.
-    if (map.getSource(sourceId)) return;
-
-    // 2. CHECK LOADING STATE
-    // If we are already downloading this file, wait. Stop.
-    if (this.loading.has(safeKey)) return;
-
-    try {
-      // Mark as loading so other calls wait
-      this.loading.add(safeKey);
-      
-      console.log(`[Map] Fetching: public/campuses/${safeKey}.json`);
-      const res = await fetch(`public/campuses/${safeKey}.json`);
-      
-      if (!res.ok) {
-        console.warn(`[Map] 404 Not Found: ${safeKey}`);
-        this.loading.delete(safeKey);
-        return; 
-      }
-      
-      const data = await res.json();
-
-      // 3. FINAL SAFETY CHECK
-      // Check Mapbox one last time in case it finished while we were waiting
-      if (map.getSource(sourceId)) return;
-
-      map.addSource(sourceId, { type: 'geojson', data });
-
-      // Blue Fill
-      map.addLayer({
-        id: `fill-${safeKey}`,
-        type: 'fill',
-        source: sourceId,
-        paint: {
-          'fill-color': '#3b82f6',
-          'fill-opacity': 0.4,
-          'fill-outline-color': '#2563eb'
-        }
-      }, 'poi-label');
-
-      // Text Label
-      map.addLayer({
-        id: `label-${safeKey}`,
-        type: 'symbol',
-        source: sourceId,
-        minzoom: 13,
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-          'text-size': 11,
-          'text-offset': [0, 0.6],
-          'text-anchor': 'top'
-        },
-        paint: {
-          'text-color': '#1e3a8a',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 2
-        }
-      });
-
-      this.addInteractions(map, safeKey);
-      console.log(`[Map] Success: ${uniKey}`);
-
-    } catch (e) { 
-      console.error(`[Map] Error loading ${uniKey}`, e); 
-    } finally {
-        // Always remove the loading lock when done
-        this.loading.delete(safeKey);
-    }
-  },
-
-  addInteractions(map, safeKey) {
-    const layerId = `fill-${safeKey}`;
-    
-    map.on('mouseenter', layerId, () => map.getCanvas().style.cursor = 'pointer');
-    map.on('mouseleave', layerId, () => map.getCanvas().style.cursor = '');
-
-    map.on('click', layerId, (e) => {
-      const props = e.features[0].properties;
-      const subjects = props.subjects ? `<div class="meta" style="color:#64748b; margin-top:2px">${props.subjects}</div>` : '';
-      
-      new mapboxgl.Popup()
-        .setLngLat(e.lngLat)
-        .setHTML(`
-          <div style="font-size:13px; line-height:1.4">
-            <div style="font-weight:700; color:#1e3a8a">${props.name}</div>
-            <div style="font-size:11px; font-weight:600; color:#3b82f6; margin-top:1px">${props.university_id}</div>
-            ${subjects}
-          </div>
-        `)
-        .addTo(map);
-    });
-  }
-};
 
 /************ Session + bot ************/
 const newId = () =>
@@ -497,113 +369,38 @@ function syncPOIMarkers(){
 function drawCampusMarkers(){
   if (!uniIndex) return;
   clearUniMarkers();
-  
-  // Clean up old line layers
-  const style = map.getStyle();
-  if (style && style.layers) {
-      style.layers.forEach(layer => {
-          if (layer.id.startsWith('lines-')) map.removeLayer(layer.id);
-      });
-      Object.keys(style.sources).forEach(sourceId => {
-          if (sourceId.startsWith('source-lines-')) map.removeSource(sourceId);
-      });
-  }
-
   for (const [key, campus] of uniIndex.campuses.entries()){
-    
-    // 1. Load Building Shapes
-    CampusManager.load(map, campus.id);
+    if (campus.lon == null || campus.lat == null) continue;
+    const el = makePin('pin--uni','🎓');
+    const cityHtml  = campus.city ? `<div class="meta">${escapeHtml(campus.city)}</div>` : '';
+    const count     = campus.propIDs ? campus.propIDs.size : 0;
+    const popupHtml = `
+      <div style="font-size:13px; line-height:1.35">
+        <div style="font-weight:700">${escapeHtml(campus.name||'')}</div>
+        ${cityHtml}
+        <div class="meta">${count} linked properties</div>
+      </div>`;
 
-    if (campus.lat && campus.lon) {
-        
-        // --- A. DRAW THE CONNECTION LINES (Spider Webs) ---
-        if (campus.buildings.length > 0) {
-            const lineGeoJson = {
-                type: 'FeatureCollection',
-                features: campus.buildings.map(b => ({
-                    type: 'Feature',
-                    geometry: {
-                        type: 'LineString',
-                        coordinates: [
-                            [campus.lon, campus.lat], 
-                            [b.lon, b.lat]            
-                        ]
-                    }
-                }))
-            };
+    const m = new mapboxgl.Marker({ element: el, anchor:'bottom' })
+      .setLngLat([campus.lon, campus.lat])
+      .setPopup(new mapboxgl.Popup({ offset:8 }).setHTML(popupHtml))
+      .addTo(map);
 
-            const safeId = campus.id.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-            const sourceId = `source-lines-${safeId}`;
-            const layerId = `lines-${safeId}`;
+    // Hover: show university name as a tooltip
+    const hoverLabel = campus.name || 'University';
+    const domEl = m.getElement();
+    domEl.addEventListener('mouseenter', (e) => {
+      showTip(hoverLabel, e.clientX, e.clientY);
+    });
+    domEl.addEventListener('mousemove', (e) => {
+      showTip(hoverLabel, e.clientX, e.clientY);
+    });
+    domEl.addEventListener('mouseleave', () => {
+      hideTip();
+    });
 
-            if (!map.getSource(sourceId)) {
-                map.addSource(sourceId, { type: 'geojson', data: lineGeoJson });
-                map.addLayer({
-                    id: layerId,
-                    type: 'line',
-                    source: sourceId,
-                    minzoom: 10,   
-                    maxzoom: 14.5, 
-                    layout: { 'line-join': 'round', 'line-cap': 'round' },
-                    paint: {
-                        'line-color': '#3b82f6',
-                        'line-width': 1.5,
-                        'line-opacity': 0.4,
-                        'line-dasharray': [2, 4] 
-                    }
-                }, 'poi-label');
-            }
-        }
-
-        // --- B. DRAW THE PIN (Using Standard App Style) ---
-        // We use makePin to get the exact same bubble shape/style as properties
-        const el = makePin('pin--uni', '🎓');
-        
-        // Match the Property Pin Size (Properties are scaled to 1.2)
-        el.style.transform = 'scale(1.2)';
-        el.style.cursor = 'pointer';
-        el.style.zIndex = '50'; // Below properties (100) but above map
-
-        // Use 'bottom' anchor to match property pins
-        const m = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
-            .setLngLat([campus.lon, campus.lat])
-            .addTo(map);
-
-        // --- C. TEXT ON HOVER ONLY ---
-        const popup = new mapboxgl.Popup({
-            offset: 35, // Adjusted for the pin height
-            closeButton: false,
-            closeOnClick: false,
-            className: 'uni-hover-popup'
-        }).setHTML(`<div style="font-weight:700; color:#1e3a8a; padding:4px 8px;">${escapeHtml(campus.id)}</div>`);
-
-        el.addEventListener('mouseenter', () => popup.setLngLat([campus.lon, campus.lat]).addTo(map));
-        el.addEventListener('mouseleave', () => popup.remove());
-
-        el.addEventListener('click', () => {
-            map.flyTo({ center: [campus.lon, campus.lat], zoom: 14.5, duration: 1200 });
-        });
-
-        markersUni.set(key, m);
-    }
+    markersUni.set(key, m);
   }
-
-  // Register Zoom Listener
-  map.off('zoom', updateUniMarkersVisibility);
-  map.on('zoom', updateUniMarkersVisibility);
-  updateUniMarkersVisibility(); 
-}
-
-// Helper: Hides Master Pins when zoomed in
-function updateUniMarkersVisibility() {
-    const currentZoom = map.getZoom();
-    const showPins = currentZoom < 14; // Handoff point
-
-    for (const m of markersUni.values()) {
-        const el = m.getElement();
-        el.style.opacity = showPins ? '1' : '0';
-        el.style.pointerEvents = showPins ? 'auto' : 'none';
-    }
 }
 
 /************ University distance data ************/
@@ -614,73 +411,66 @@ function updateUniMarkersVisibility() {
            "time_transport", "time_cycling",
            "propid"
 */
-// --- UPGRADED: Fetch Pro Distances ---
 async function fetchUniDataForProps(propIDs){
   if (!propIDs?.length) return { campuses:new Map(), nearestByProp:new Map() };
+
   const ids = propIDs.map(String);
 
-  // 1. Fetch Distances + Building Coordinates
   const { data, error } = await supabase
-    .from('university_distances') 
-    .select('university_id, building_id, distance_walking, time_walking, time_cycling, time_transport, propid, lat, long')
+    .from('university_distance_n8n')
+    .select('university, lat, long, time_walking_in_minutes, time_transport, time_cycling, propid')
     .in('propid', ids);
 
-  if (error || !data?.length) return { campuses:new Map(), nearestByProp:new Map() };
+  if (error || !data?.length){
+    console.error('[supabase] university_distance_n8n error or empty', error);
+    return { campuses:new Map(), nearestByProp:new Map() };
+  }
 
-  // 2. Fetch Building Names
-  const buildingIds = [...new Set(data.map(d => d.building_id))];
-  const { data: bData } = await supabase
-    .from('university_buildings')
-    .select('building_id, name, university_id, subjects')
-    .in('building_id', buildingIds);
-    
-  const buildingMap = new Map(bData?.map(b => [b.building_id, b]));
-
-  const campuses = new Map(); 
-  const nearestByProp = new Map();
+  const campuses      = new Map(); // key -> { name, lat, lon, propIDs:Set }
+  const nearestByProp = new Map(); // pid -> { name, walkSecs, walkMins, walkMeters, cycleSecs, cycleMins, transportSecs, transportMins }
 
   for (const r of data){
-    const pid = String(r.propid);
-    const bInfo = buildingMap.get(r.building_id);
-    if (!bInfo) continue;
+    const pid     = String(r.propid);
+    const uniName = String(r.university || '').trim();
+    if (!pid || !uniName) continue;
 
-    const uniKey = r.university_id;
-    
-    // --- SETUP CAMPUS (HUB) ---
-    if (!campuses.has(uniKey)) {
-        // Look up the Master Coordinates from our constant
-        const master = UNI_MASTER_LOCATIONS[uniKey] || { lat: null, lon: null };
-        campuses.set(uniKey, { 
-            id: uniKey, 
-            lat: master.lat, 
-            lon: master.lon,
-            buildings: [] // Store child coordinates for the lines
-        });
-    }
-    const c = campuses.get(uniKey);
-    
-    // Add child building location (for the spoke lines)
-    // We filter duplicates slightly to avoid drawing 50 lines to the same building
-    if (r.lat && r.long) {
-        const alreadyHas = c.buildings.some(b => b.lat === r.lat && b.lon === r.long);
-        if (!alreadyHas) c.buildings.push({ lat: r.lat, lon: r.long });
-    }
+    const lat = r.lat  != null ? Number(r.lat)  : null;
+    const lon = r.long != null ? Number(r.long) : null;
 
-    // [Standard Distance Logic]
+    const campusKey = `${uniName}|${lat}|${lon}`;
+    let campus = campuses.get(campusKey);
+    if (!campus){
+      campus = { name: uniName, lat, lon, propIDs: new Set() };
+      campuses.set(campusKey, campus);
+    }
+    campus.propIDs.add(pid);
+
+    const walkSecs      = Number.isFinite(Number(r.time_walking_in_minutes)) ? Number(r.time_walking_in_minutes) * 60 : null;
+    const walkMeters    = null; // Distance column is missing
+    const cycleSecs     = Number.isFinite(Number(r.time_cycling))   ? Number(r.time_cycling)   : null;
+    const transportSecs = Number.isFinite(Number(r.time_transport)) ? Number(r.time_transport) : null;
+
     const candidate = {
-      uniId: uniKey,
-      buildingName: bInfo.name, 
-      subjects: bInfo.subjects,
-      walkSecs: r.time_walking,
-      walkMins: r.time_walking ? Math.round(r.time_walking / 60) : null,
-      cycleMins: r.time_cycling ? Math.round(r.time_cycling / 60) : null,
-      transportMins: r.time_transport ? Math.round(r.time_transport / 60) : null,
-      walkMeters: r.distance_walking
+      name: uniName,
+      walkSecs,
+      walkMins:      walkSecs != null ? Math.round(walkSecs / 60) : null,
+      walkMeters,
+      cycleSecs,
+      cycleMins:     cycleSecs != null ? Math.round(cycleSecs / 60) : null,
+      transportSecs,
+      transportMins: transportSecs != null ? Math.round(transportSecs / 60) : null
     };
 
     const prev = nearestByProp.get(pid);
-    if (!prev || (candidate.walkMins && candidate.walkMins < prev.walkMins)) {
+    // Prefer the uni with the shortest walking time; fall back to first seen
+    if (!prev){
       nearestByProp.set(pid, candidate);
+    } else {
+      const prevSecs = prev.walkSecs;
+      const candSecs = candidate.walkSecs;
+      if (candSecs != null && (prevSecs == null || candSecs < prevSecs)){
+        nearestByProp.set(pid, candidate);
+      }
     }
   }
 
@@ -1301,26 +1091,15 @@ function renderList(props){
     
     const uniHtml   = (() => {
       const u = p._nearestUni;
-      if (!u) return '';
-      
-      // LOGIC: Construct the "Building (University)" label
-      let label = u.buildingName || u.uniId;
-      
-      // If the building name is different from the Uni name, show both.
-      // e.g. "Wilkins Building (UCL)" vs just "Bayes Business School"
-      if (u.buildingName && u.uniId && u.buildingName !== u.uniId) {
-          label = `${u.buildingName} (${u.uniId})`;
-      }
-
+      if (!u || !u.name) return '';
       const timePart = formatWalkMins(u.walkMins);
       const distPart = formatWalkDistance(u.walkMeters);
       let detail = '';
       if (timePart && distPart) detail = `${timePart} (${distPart})`;
       else detail = timePart || distPart;
-      
       return detail
-        ? `<div class="decision">Nearest: <span style="color:#2563eb; font-weight:600">${escapeHtml(label)}</span> · ${detail}</div>`
-        : `<div class="decision">Nearest: ${escapeHtml(label)}</div>`;
+        ? `<div class="decision">Nearest uni: ${escapeHtml(u.name)} · ${detail}</div>`
+        : `<div class="decision">Nearest uni: ${escapeHtml(u.name)}</div>`;
     })();
 
     const hasDesc  = !!p.property_description;
