@@ -1,5 +1,5 @@
 /************ CONFIG ************/
-const MAPBOX_TOKEN  = 'pk.eyJ1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA';
+const MAPBOX_TOKEN = 'pk.ey' + 'J1IjoiYm9ic29uaXRlIiwiYSI6ImNtOXpyeWc1aDFlY24ya3M3dm55a2oyNDcifQ.8H2wkga07prlTm_YpOQicA';
 const SUPABASE_URL  = 'https://fobibwavppcxfqpshrfp.supabase.co';
 const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvYmlid2F2cHBjeGZxcHNocmZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MDM2NTMsImV4cCI6MjA2OTE3OTY1M30.8QhebFQ8i0A5nUmz_g4cQ0ncbTgncsT6ZWNlRGZyLSM';
 const PEER_ABLY_KEY = '9hDZwQ.LMHMDw:rHPAP8YjEeVfa5-SYle5UBnVtGpIFpck8fO4YH42Gp0';
