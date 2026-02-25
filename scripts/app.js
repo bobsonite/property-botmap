@@ -12,24 +12,23 @@ const STYLES = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12' // available via flag, not UI
 };
 
-// --- MASTER UNIVERSITY PINS (From your CSV) ---
+// --- MASTER UNIVERSITY PINS (Updated to match Database) ---
 const UNI_MASTER_LOCATIONS = {
-  "University of Westminster":                              { lat: 51.5220, lon: -0.154574 },
-  "London School of Economics and Political Science (LSE)": { lat: 51.5141, lon: -0.116946 },
-  "Regent’s University London":                             { lat: 51.5257, lon: -0.155635 },
-  "King's College London":                                  { lat: 51.5116, lon: -0.116228 },
-  "London South Bank University":                           { lat: 51.4987, lon: -0.101747 },
-  "Middlesex University London":                            { lat: 51.5899, lon: -0.229002 },
-  "Imperial College London":                                { lat: 51.4993, lon: -0.179178 },
-  "Brunel University London":                               { lat: 51.5328, lon: -0.472836 },
-  "University of Greenwich":                                { lat: 51.4845, lon: -0.003979 },
-  "University of the Arts London (UAL)":                    { lat: 51.5178, lon: -0.116363 },
-  "Queen Mary University of London":                        { lat: 51.5246, lon: -0.040683 },
-  "Bayes Business School":                                  { lat: 51.5221, lon: -0.090396 },
-  "Goldsmiths, University of London":                       { lat: 51.4741, lon: -0.035375 },
-  "SOAS University of London":                              { lat: 51.5224, lon: -0.129234 },
-  "University College London (UCL)":                        { lat: 51.5236, lon: -0.132398 },
-  "City, University of London":                             { lat: 51.5279, lon: -0.103099 }
+  "University of Westminster":          { lat: 51.5169, lon: -0.1432 },
+  "London School of Economics (LSE)":   { lat: 51.5145, lon: -0.1168 }, // Updated Name
+  "Regent’s University London":         { lat: 51.5260, lon: -0.1548 },
+  "King's College London":              { lat: 51.5115, lon: -0.1161 },
+  "London South Bank University":       { lat: 51.4975, lon: -0.1023 },
+  "Middlesex University London":        { lat: 51.5897, lon: -0.2295 },
+  "Imperial College London":            { lat: 51.4989, lon: -0.1746 },
+  "Brunel University London":           { lat: 51.5322, lon: -0.4726 },
+  "University of Greenwich":            { lat: 51.4830, lon: -0.0064 },
+  "University of the Arts London (UAL)":{ lat: 51.5363, lon: -0.1246 },
+  "Queen Mary University of London":    { lat: 51.5237, lon: -0.0407 },
+  "City, University of London":         { lat: 51.5277, lon: -0.1027 },
+  "Goldsmiths, University of London":   { lat: 51.4744, lon: -0.0352 },
+  "SOAS University of London":          { lat: 51.5216, lon: -0.1293 },
+  "University College London (UCL)":    { lat: 51.5253, lon: -0.1343 }
 };
 const USE_SATELLITE = false; // flip to true for satellite hybrid
 
