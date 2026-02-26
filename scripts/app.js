@@ -32,70 +32,108 @@ const UNI_MASTER_LOCATIONS = {
 };
 const USE_SATELLITE = false; // flip to true for satellite hybrid
 
-// --- NEW MODULE: Campus Polygon Manager ---
+// --- NEW MODULE: Campus Manager (Standardized Logo Sizes) ---
 const CampusManager = {
-  // We keep a set of what is currently LOADING to prevent double-fetching
   loading: new Set(),
+
+  loadImage(map, url) {
+    return new Promise((resolve, reject) => {
+      map.loadImage(url, (error, image) => {
+        if (error) reject(error);
+        else resolve(image);
+      });
+    });
+  },
 
   async load(map, uniKey) {
     if (!uniKey) return;
     
-    // Create the unique ID
     const safeKey = uniKey.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase().replace(/^_|_$/g, '');
     const sourceId = `src-${safeKey}`;
+    const logoId   = `logo-img-${safeKey}`;
 
-    // 1. CHECK MAPBOX DIRECTLY
-    // If Mapbox already has this source, we are done. Stop.
     if (map.getSource(sourceId)) return;
-
-    // 2. CHECK LOADING STATE
-    // If we are already downloading this file, wait. Stop.
     if (this.loading.has(safeKey)) return;
 
     try {
-      // Mark as loading so other calls wait
       this.loading.add(safeKey);
       
-      console.log(`[Map] Fetching: public/campuses/${safeKey}.json`);
       const res = await fetch(`public/campuses/${safeKey}.json`);
-      
-      if (!res.ok) {
-        console.warn(`[Map] 404 Not Found: ${safeKey}`);
-        this.loading.delete(safeKey);
-        return; 
-      }
-      
+      if (!res.ok) { this.loading.delete(safeKey); return; }
       const data = await res.json();
+      data.features.forEach(f => { f.properties.university_id = uniKey; });
 
-      // 3. FINAL SAFETY CHECK
-      // Check Mapbox one last time in case it finished while we were waiting
+      let scale = 0.25; // Default fallback scale
+
+      // 2. Load Image & Calculate Standard Size
+      if (!map.hasImage(logoId)) {
+          try {
+              const img = await this.loadImage(map, `public/logos/${safeKey}.png`);
+              
+              // AUTO-SCALE LOGIC:
+              // We want every logo to be roughly 40px wide on screen.
+              // If image is 200px wide, scale = 40/200 = 0.2
+              // If image is 1000px wide, scale = 40/1000 = 0.04
+              const targetWidth = 45; 
+              scale = targetWidth / img.width;
+              
+              map.addImage(logoId, img);
+          } catch (err) {
+              console.warn(`Missing logo for: ${safeKey}`); 
+          }
+      }
+
       if (map.getSource(sourceId)) return;
-
       map.addSource(sourceId, { type: 'geojson', data });
 
-      // Blue Fill
+      const initialVis = (typeof showCampuses !== 'undefined' && showCampuses) ? 'visible' : 'none';
+      const HANDOFF_ZOOM = 13;
+
+      // --- LAYER 1: THE LOGO (Standardized Size) ---
+      map.addLayer({
+        id: `logo-${safeKey}`,
+        type: 'symbol',
+        source: sourceId,
+        maxzoom: HANDOFF_ZOOM,
+        layout: {
+          'visibility': initialVis,
+          'icon-image': map.hasImage(logoId) ? logoId : 'college-15',
+          'icon-size': scale, // <--- We apply the calculated scale here!
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true
+        },
+        paint: {
+          'icon-opacity': 1
+        }
+      });
+
+      // --- LAYER 2: THE 3D BUILDING ---
       map.addLayer({
         id: `fill-${safeKey}`,
-        type: 'fill',
+        type: 'fill-extrusion',
         source: sourceId,
+        minzoom: HANDOFF_ZOOM,
+        layout: { 'visibility': initialVis },
         paint: {
-          'fill-color': '#3b82f6',
-          'fill-opacity': 0.4,
-          'fill-outline-color': '#2563eb'
+          'fill-extrusion-color': '#2563eb',
+          'fill-extrusion-height': 20, 
+          'fill-extrusion-opacity': 0.9,
+          'fill-extrusion-base': 0
         }
       }, 'poi-label');
 
-      // Text Label
+      // --- LAYER 3: LABELS ---
       map.addLayer({
         id: `label-${safeKey}`,
         type: 'symbol',
-        source: sourceId,
-        minzoom: 13,
+        source: sourceId, 
+        minzoom: HANDOFF_ZOOM,
         layout: {
+          'visibility': initialVis,
           'text-field': ['get', 'name'],
-          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
           'text-size': 11,
-          'text-offset': [0, 0.6],
+          'text-offset': [0, 1],
           'text-anchor': 'top'
         },
         paint: {
@@ -105,37 +143,38 @@ const CampusManager = {
         }
       });
 
-      this.addInteractions(map, safeKey);
-      console.log(`[Map] Success: ${uniKey}`);
+      this.addInteractions(map, safeKey, uniKey);
 
     } catch (e) { 
       console.error(`[Map] Error loading ${uniKey}`, e); 
     } finally {
-        // Always remove the loading lock when done
         this.loading.delete(safeKey);
     }
   },
 
-  addInteractions(map, safeKey) {
-    const layerId = `fill-${safeKey}`;
+  addInteractions(map, safeKey, uniName) {
+    const logoLayer = `logo-${safeKey}`;
+    const fillLayer = `fill-${safeKey}`;
     
-    map.on('mouseenter', layerId, () => map.getCanvas().style.cursor = 'pointer');
-    map.on('mouseleave', layerId, () => map.getCanvas().style.cursor = '');
+    const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 15 });
 
-    map.on('click', layerId, (e) => {
-      const props = e.features[0].properties;
-      const subjects = props.subjects ? `<div class="meta" style="color:#64748b; margin-top:2px">${props.subjects}</div>` : '';
-      
-      new mapboxgl.Popup()
-        .setLngLat(e.lngLat)
-        .setHTML(`
-          <div style="font-size:13px; line-height:1.4">
-            <div style="font-weight:700; color:#1e3a8a">${props.name}</div>
-            <div style="font-size:11px; font-weight:600; color:#3b82f6; margin-top:1px">${props.university_id}</div>
-            ${subjects}
-          </div>
-        `)
-        .addTo(map);
+    map.on('mouseenter', logoLayer, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        popup.setLngLat(e.lngLat)
+             .setHTML(`<div style="font-weight:700; color:#1e3a8a">${uniName}</div>`)
+             .addTo(map);
+    });
+
+    map.on('mouseleave', logoLayer, () => {
+        map.getCanvas().style.cursor = '';
+        popup.remove();
+    });
+
+    map.on('click', fillLayer, (e) => {
+        new mapboxgl.Popup()
+            .setLngLat(e.lngLat)
+            .setHTML(`<div style="font-weight:bold">${e.features[0].properties.name}</div>`)
+            .addTo(map);
     });
   }
 };
@@ -206,6 +245,32 @@ const savedToggle   = document.getElementById('savedToggle');
 const savedCountEl  = document.getElementById('savedCount');
 const savedPanel    = document.getElementById('savedPanel');
 const placesToggle  = document.getElementById('placesToggle');
+
+/* Campuses toggle */
+const campusesToggle = document.getElementById('campusesToggle');
+let showCampuses = false; 
+
+campusesToggle?.addEventListener('click', () => {
+  showCampuses = !showCampuses;
+  campusesToggle.setAttribute('aria-pressed', String(showCampuses));
+  
+  const visibility = showCampuses ? 'visible' : 'none';
+  
+  if (uniIndex && uniIndex.campuses) {
+      for (const [key, campus] of uniIndex.campuses.entries()) {
+          const safeKey = campus.id.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase().replace(/^_|_$/g, '');
+          
+          // 1. Toggle Logo (Zoomed Out)
+          if (map.getLayer(`logo-${safeKey}`)) map.setLayoutProperty(`logo-${safeKey}`, 'visibility', visibility);
+
+          // 2. Toggle Real Buildings (Zoomed In)
+          if (map.getLayer(`fill-${safeKey}`)) map.setLayoutProperty(`fill-${safeKey}`, 'visibility', visibility);
+          
+          // 3. Toggle Labels
+          if (map.getLayer(`label-${safeKey}`)) map.setLayoutProperty(`label-${safeKey}`, 'visibility', visibility);
+      }
+  }
+});
 
 /* Filters collapse */
 filtersToggle?.addEventListener('click', ()=>{
@@ -497,9 +562,10 @@ function syncPOIMarkers(){
 
 function drawCampusMarkers(){
   if (!uniIndex) return;
+  // Clear any existing pins/markers to ensure a clean slate
   clearUniMarkers();
-  
-  // Clean up old line layers
+
+  // Clean up old "spiderweb" line layers if they exist
   const style = map.getStyle();
   if (style && style.layers) {
       style.layers.forEach(layer => {
@@ -510,98 +576,13 @@ function drawCampusMarkers(){
       });
   }
 
+  // --- NEW SIMPLIFIED LOOP ---
+  // Just load the building shapes. No Master Pins. No Lines.
   for (const [key, campus] of uniIndex.campuses.entries()){
-    
-    // 1. Load Building Shapes
     CampusManager.load(map, campus.id);
-
-    if (campus.lat && campus.lon) {
-        
-        // --- A. DRAW THE CONNECTION LINES ---
-        if (campus.buildings.length > 0) {
-            const lineGeoJson = {
-                type: 'FeatureCollection',
-                features: campus.buildings.map(b => ({
-                    type: 'Feature',
-                    geometry: {
-                        type: 'LineString',
-                        coordinates: [
-                            [campus.lon, campus.lat], 
-                            [b.lon, b.lat]            
-                        ]
-                    }
-                }))
-            };
-
-            const safeId = campus.id.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-            const sourceId = `source-lines-${safeId}`;
-            const layerId = `lines-${safeId}`;
-
-            if (!map.getSource(sourceId)) {
-                map.addSource(sourceId, { type: 'geojson', data: lineGeoJson });
-                map.addLayer({
-                    id: layerId,
-                    type: 'line',
-                    source: sourceId,
-                    minzoom: 10,   
-                    maxzoom: 14.5, 
-                    layout: { 'line-join': 'round', 'line-cap': 'round' },
-                    paint: {
-                        'line-color': '#3b82f6',
-                        'line-width': 1.5,
-                        'line-opacity': 0.4,
-                        'line-dasharray': [2, 4] 
-                    }
-                }, 'poi-label');
-            }
-        }
-
-        // --- B. DRAW THE PIN (With Wrapper Fix) ---
-        
-        // 1. Create the visible pin (this is what animates)
-        const innerPin = makePin('pin--uni', '🎓');
-        innerPin.style.transform = 'scale(1.2)'; // Initial scale
-        innerPin.style.cursor = 'pointer';
-        // Remove z-index from inner pin, the wrapper handles stacking order in Mapbox mostly, 
-        // but keeping it doesn't hurt.
-        
-        // 2. Create a Wrapper (Ghost Container)
-        // Mapbox will move THIS div. We won't touch its transform.
-        const wrapper = document.createElement('div');
-        wrapper.appendChild(innerPin);
-        
-        // 3. Create Marker using the WRAPPER
-        const m = new mapboxgl.Marker({ element: wrapper, anchor: 'bottom' })
-            .setLngLat([campus.lon, campus.lat])
-            .addTo(map);
-
-        // --- C. EVENTS (Attach to innerPin so interaction feels direct) ---
-        const popup = new mapboxgl.Popup({
-            offset: 35, 
-            closeButton: false,
-            closeOnClick: false,
-            className: 'uni-hover-popup'
-        }).setHTML(`<div style="font-weight:700; color:#1e3a8a; padding:4px 8px;">${escapeHtml(campus.id)}</div>`);
-
-        innerPin.addEventListener('mouseenter', () => {
-             // Ensure popup is added to map
-             popup.setLngLat([campus.lon, campus.lat]).addTo(map);
-        });
-        
-        innerPin.addEventListener('mouseleave', () => popup.remove());
-
-        innerPin.addEventListener('click', () => {
-            map.flyTo({ center: [campus.lon, campus.lat], zoom: 14.5, duration: 1200 });
-        });
-
-        markersUni.set(key, m);
-    }
   }
-
-  // Register Zoom Listener
-  map.off('zoom', updateUniMarkersVisibility);
-  map.on('zoom', updateUniMarkersVisibility);
-  updateUniMarkersVisibility(); 
+  
+  // Note: We no longer need the zoom listener since we aren't hiding/showing master pins anymore.
 }
 
 // Helper: Hides Master Pins when zoomed in
@@ -1173,22 +1154,36 @@ function makePopupPoiSummary(a){
 
 function drawProperty(p){
   const id = String(p.propID);
-  const el = makePin('pin--prop','🏠');
-  const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
+  
+  // 1. Create the Marker Element
+  const el = document.createElement('div');
+  el.className = 'pin pin--prop'; // Base class
+  
+  // 2. Determine Logo Path (Sanitize owner name)
+  // e.g. "Chapter Living" -> "chapterliving"
+  const safeOwner = p.owner ? String(p.owner).toLowerCase().replace(/[^a-z0-9]/g, '') : 'unknown';
+  const logoUrl = `public/logos/providers/${safeOwner}.png`; // Adjust path if you put them elsewhere
 
-  // GHOST MODE STYLE - HIGH CONTRAST:
+  // 3. Build Inner HTML (Logo + Fallback Emoji)
+  // We use an <img> tag. If it fails to load, we hide it and show the emoji.
+  el.innerHTML = `
+    <div class="pin-icon-wrapper">
+      <span class="pin-emoji">🏠</span> 
+      <img src="${logoUrl}" alt="${safeOwner}" class="pin-logo" onerror="this.style.display='none'; this.previousElementSibling.style.display='block';" style="display: block;">
+    </div>
+  `;
+  // Note: CSS usually hides .pin-emoji by default if .pin-logo is showing. 
+  // The onerror script flips this logic if the image breaks.
+
+  // 4. Ghost Mode Styles
   const isGhost = p._isHighlighted === false;
-
-  // Settings:
-  // Ghost: Very transparent (0.25), smaller size (0.85), grayscale, pushed to back (z-index 0).
-  // Active: Full opacity (1.0), larger size pop (1.2), normal color, brought to front (z-index 100).
   el.style.opacity    = isGhost ? '0.25' : '1.0';
   el.style.zIndex     = isGhost ? '0' : '100';
-  el.style.filter     = isGhost ? 'grayscale(100%) contrast(70%)' : 'none'; //Dull the ghosts further
-  el.style.transform  = isGhost ? 'scale(0.85)' : 'scale(1.2)'; // Size difference creates "pop"
-  // Add smooth transition for these properties
+  el.style.filter     = isGhost ? 'grayscale(100%) contrast(70%)' : 'none';
+  el.style.transform  = isGhost ? 'scale(0.85)' : 'scale(1.2)';
   el.style.transition = 'opacity 0.3s, transform 0.3s, filter 0.3s';
 
+  // 5. Popup Content (Same as before)
   const ownerHtml   = p.owner ? `<div class="meta">${escapeHtml(p.owner)}</div>` : '';
   const addrHtml    = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
   const uniHtml     = (() => {
@@ -1230,6 +1225,9 @@ function drawProperty(p){
       ${linkHtml}
     </div>`;
 
+  // 6. Create/Update Marker
+  const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
+
   marker
     .setLngLat([p.lon, p.lat])
     .setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'340px' }).setHTML(html))
@@ -1237,18 +1235,32 @@ function drawProperty(p){
 
   markersProp.set(id, marker);
 
-  // Hover: highlight card + show property name as a tooltip (no more rings)
+  // 7. Interactions
   const hoverLabel = p.property || 'Property';
   
   el.addEventListener('mouseenter', (e)=> {
-    // 1. Show tooltip immediately (so user knows what it is)
     showTip(hoverLabel, e.clientX, e.clientY);
-    
-    // 2. Clear any pending scroll from a previous pin to stop "queueing"
     if (hoverTimer) clearTimeout(hoverTimer);
 
-    // 3. Wait 350ms before scrolling the panel. 
-    // If mouse leaves before this time, the scroll is cancelled.
+    // --- HOVER LINE LOGIC ---
+    const u = p._nearestUni;
+    if (u && u.buildingLat && u.buildingLon) {
+        const lineData = {
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: [[p.lon, p.lat], [u.buildingLon, u.buildingLat]] }
+        };
+        if (map.getSource('hover-line-src')) {
+            map.getSource('hover-line-src').setData(lineData);
+        } else {
+            map.addSource('hover-line-src', { type: 'geojson', data: lineData });
+            map.addLayer({
+                id: 'hover-line', type: 'line', source: 'hover-line-src',
+                paint: { 'line-color': '#2563eb', 'line-width': 3, 'line-dasharray': [2, 1] }
+            });
+        }
+    }
+    // -----------------------
+
     hoverTimer = setTimeout(() => {
         toggleCardHot(id, true);
     }, 350);
@@ -1259,11 +1271,13 @@ function drawProperty(p){
   });
 
   el.addEventListener('mouseleave', ()=> {
-    // Mouse left! Cancel the pending scroll timer immediately.
     if (hoverTimer) clearTimeout(hoverTimer);
-    
     toggleCardHot(id, false);
     hideTip();
+    
+    // Remove Hover Line
+    if (map.getLayer('hover-line')) map.removeLayer('hover-line');
+    if (map.getSource('hover-line-src')) map.removeSource('hover-line-src');
   });
 }
 

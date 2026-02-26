@@ -95,8 +95,31 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
    + soft type-specific tints */
 .pin--prop{
   z-index:3;
-  background:#f5f3ff;               /* soft lilac */
+  background:#ffffff;               /* White background for logos */
   border-color:var(--accent-2);     /* your purple */
+  overflow: hidden;                 /* CRITICAL: Crops the square image to the circle */
+  padding: 0;                       /* Remove padding to let logo fill the pin */
+}
+
+/* --- New Styles for Logo Pins --- */
+.pin-icon-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pin-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover; /* Ensures the logo fills the circle perfectly */
+  display: block;
+}
+
+.pin-emoji {
+  font-size: 18px;
+  display: none; /* Hidden by default */
 }
 .pin--poi{
   z-index:2;
