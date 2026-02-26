@@ -12,10 +12,10 @@ const STYLES = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12' // available via flag, not UI
 };
 
-// --- MASTER UNIVERSITY PINS (Updated to match Database) ---
+// --- MASTER UNIVERSITY PINS (Matches Database IDs Exactly) ---
 const UNI_MASTER_LOCATIONS = {
   "University of Westminster":          { lat: 51.5169, lon: -0.1432 },
-  "London School of Economics (LSE)":   { lat: 51.5145, lon: -0.1168 }, // Updated Name
+  "London School of Economics (LSE)":   { lat: 51.5145, lon: -0.1168 },
   "Regent’s University London":         { lat: 51.5260, lon: -0.1548 },
   "King's College London":              { lat: 51.5115, lon: -0.1161 },
   "London South Bank University":       { lat: 51.4975, lon: -0.1023 },
@@ -41,7 +41,7 @@ const CampusManager = {
     if (!uniKey) return;
     
     // Create the unique ID
-    const safeKey = uniKey.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+    const safeKey = uniKey.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase().replace(/^_|_$/g, '');
     const sourceId = `src-${safeKey}`;
 
     // 1. CHECK MAPBOX DIRECTLY
