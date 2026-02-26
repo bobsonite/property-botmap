@@ -626,6 +626,12 @@ function updateUniMarkersVisibility() {
 */
 // --- UPGRADED: Fetch Pro Distances ---
 async function fetchUniDataForProps(propIDs){
+  // --- DIAGNOSTIC LOG START ---
+  console.log("🔍 DIAGNOSIS: Fetching Uni Data");
+  console.log("👉 IDs being sent to DB:", propIDs.slice(0, 3)); // Check if these are UUIDs or Slugs
+  // --- DIAGNOSTIC LOG END ---
+
+
   if (!propIDs?.length) return { campuses:new Map(), nearestByProp:new Map() };
   const ids = propIDs.map(String);
 
