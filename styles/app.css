@@ -37,7 +37,107 @@
 }
 
 html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+/* Restored height (banner now floats over the map) */
 .wrap { display:flex; height:100vh; position:relative; }
+
+/* --- Global Top Banner Styles (Faded & Shifted Right) --- */
+.global-banner {
+  position: absolute; /* Floats over the app */
+  top: 0;
+  right: 0;
+  /* Starts exactly where the 28vw/320px chatbot ends! */
+  left: max(28vw, 320px); 
+  height: 36px;
+  background: rgba(109, 40, 217, 0.08); /* Sleek translucent purple */
+  backdrop-filter: blur(12px); /* Glass effect */
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--accent); /* Dark purple text */
+  border-bottom: 1px solid rgba(109, 40, 217, 0.15);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  font-size: 13px;
+}
+
+@media (max-width: 1023px) {
+  .global-banner { left: 0; } /* Full width on mobile where bot is hidden */
+}
+
+.gb-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: default;
+  height: 100%;
+  padding: 0 20px;
+}
+
+.gb-title {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.gb-hint {
+  font-size: 10px;
+  background: rgba(109, 40, 217, 0.12); /* Subtle badge */
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+/* The hidden dropdown menu */
+.gb-dropdown {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-10px);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  color: var(--text);
+  width: 260px;
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 10px 30px rgba(109,40,217,0.15);
+  border: 1px solid var(--accent-2);
+  border-top: none;
+  padding: 16px;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+  pointer-events: none;
+}
+
+.global-banner:hover .gb-dropdown {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+
+.gb-list {
+  margin: 0 0 16px 0;
+  padding-left: 22px;
+  line-height: 1.6;
+}
+.gb-list li { margin-bottom: 4px; }
+
+.gb-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--accent);
+  color: #ffffff !important;
+  padding: 8px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+.gb-link:hover {
+  background: #581c87;
+  text-decoration: none;
+}
 
 #botPane { width:28vw; min-width:320px; overflow:auto; }
 #map     { flex:1; position:relative; }
@@ -50,9 +150,9 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   background:var(--panel-bg);
 }
 
-/* topbar */
+/* Push map toggles down so they don't hide under the glass banner */
 .topbar {
-  position:absolute; right:12px; top:12px; z-index:2;
+  position:absolute; right:12px; top:48px; z-index:2;
   background:var(--card); color:var(--text);
   padding:6px 8px; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.08);
   display:flex; align-items:center; gap:8px; border:1px solid var(--card-border);
@@ -172,6 +272,11 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   box-shadow:0 3px 14px rgba(88, 28, 135, .35);
 }
 
+/* Push list content down on desktop so it isn't hidden under the glass banner */
+@media (min-width: 1024px) {
+  #listPane { padding-top: 36px; }
+}
+
 /* filter bar */
 #filtersBar{
   position:sticky;
@@ -179,6 +284,10 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   z-index:1;
   background:var(--panel-bg); /* solid, no see-through */
   border-bottom:1px solid var(--card-border);
+}
+
+@media (min-width: 1024px) {
+  #filtersBar { top: 36px; } /* Stick below the glass banner on desktop */
 }
 .filters-row{
   display:flex;

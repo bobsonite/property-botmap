@@ -86,19 +86,17 @@ const CampusManager = {
           }
 
           if (cX !== 0 && cY !== 0) {
-              // OUTER WRAPPER: Mapbox controls this. We do NOT scale it.
               const el = document.createElement('div');
               Object.assign(el.style, {
                   width: '32px',
                   height: '32px',
                   display: ((typeof showCampuses !== 'undefined' && showCampuses) && map.getZoom() < HANDOFF_ZOOM) ? 'block' : 'none',
-                  zIndex: '40',
+                  zIndex: '30', // Middle Layer
                   cursor: 'pointer'
               });
 
               const logoUrl = `public/logos/${safeKey}.png`;
               
-              // INNER WRAPPER: We control this. Default is small, faded, grayscale.
               el.innerHTML = `
                 <div class="uni-logo-inner" style="
                     width: 100%; height: 100%; 
@@ -119,37 +117,38 @@ const CampusManager = {
               
               this.markers.push({ key: safeKey, marker: m, el: el });
 
-              const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 15 });
-              
-              // GROUP HOVER LOGIC
-              el.addEventListener('mouseenter', () => {
+              el.addEventListener('mouseenter', (e) => {
+                  showTip(uniKey, e.clientX, e.clientY); 
+                  
                   CampusManager.markers.forEach(item => {
                       if (item.key === safeKey) {
                           const inner = item.el.querySelector('.uni-logo-inner');
                           if (inner) {
-                              inner.style.transform = 'scale(1.15)'; // Pop big
-                              inner.style.opacity = '1.0';           // Solid
-                              inner.style.filter = 'none';           // Full Color
+                              inner.style.transform = 'scale(1.15)'; 
+                              inner.style.opacity = '1.0';           
+                              inner.style.filter = 'none';           
                           }
-                          item.el.style.zIndex = '60'; // Bring to front
+                          item.el.style.zIndex = '40'; // Middle Layer Hover
                       }
                   });
-                  popup.setLngLat([cX, cY]).setHTML(`<div style="font-weight:700; color:#1e3a8a">${uniKey}</div>`).addTo(map);
               });
               
+              el.addEventListener('mousemove', (e) => showTip(uniKey, e.clientX, e.clientY));
+              
               el.addEventListener('mouseleave', () => {
+                  hideTip(); 
+                  
                   CampusManager.markers.forEach(item => {
                       if (item.key === safeKey) {
                           const inner = item.el.querySelector('.uni-logo-inner');
                           if (inner) {
-                              inner.style.transform = 'scale(0.6)'; // Shrink back
+                              inner.style.transform = 'scale(0.6)'; 
                               inner.style.opacity = '0.6';
                               inner.style.filter = 'grayscale(100%)';
                           }
-                          item.el.style.zIndex = '40';
+                          item.el.style.zIndex = '30';
                       }
                   });
-                  popup.remove();
               });
               
               el.addEventListener('click', (e) => {
@@ -1234,23 +1233,23 @@ function drawProperty(p){
   el.style.width = '32px';
   el.style.height = '32px';
   el.style.cursor = 'pointer';
-  el.style.zIndex = p._isHighlighted === false ? '0' : '100'; 
+  // Top Layer: Ghost properties are 50, Active are 100
+  el.style.zIndex = p._isHighlighted === false ? '50' : '100'; 
 
   const safeOwner = p.owner ? String(p.owner).toLowerCase().replace(/[^a-z0-9]/g, '') : 'unknown';
   const logoUrl = `public/logos/providers/${safeOwner}.png`;
 
-  // --- FIXED: Opacity bumped up, contrast drain removed ---
   const isGhost = p._isHighlighted === false;
   const defaultScale = isGhost ? 'scale(0.85)' : 'scale(1.1)';
-  const defaultOpacity = isGhost ? '0.85' : '1.0'; 
+  const defaultOpacity = '1.0'; // SOLID: No more transparency for properties!
   const defaultFilter = isGhost ? 'grayscale(100%)' : 'none';
 
   el.innerHTML = `
     <div class="prop-inner" style="
         width: 100%; height: 100%;
         background-color: white; border-radius: 50%;
-        border: 2px solid #8b5cf6; 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        border: 3px solid #8b5cf6; /* THICKER BORDER for extra pop */
+        box-shadow: 0 3px 6px rgba(0,0,0,0.3); /* Stronger default shadow */
         overflow: hidden; display: flex; align-items: center; justify-content: center;
         transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
         transform: ${defaultScale};
@@ -1301,9 +1300,14 @@ function drawProperty(p){
 
   const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
 
+  const popup = new mapboxgl.Popup({ offset:8, maxWidth:'340px' }).setHTML(html);
+  popup.on('open', () => {
+      if (popup.getElement()) popup.getElement().style.zIndex = '99999';
+  });
+
   marker
     .setLngLat([p.lon, p.lat])
-    .setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'340px' }).setHTML(html))
+    .setPopup(popup)
     .addTo(map);
 
   markersProp.set(id, marker);
@@ -1377,13 +1381,12 @@ function drawProperty(p){
                 if (m) {
                     const inner = m.getElement().querySelector('.prop-inner');
                     if (inner) {
-                        // --- FIXED: Resetting back to 0.85 opacity ---
                         const isGhostLocal = otherProp._isHighlighted === false;
                         inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)';
-                        inner.style.opacity = isGhostLocal ? '0.85' : '1.0';
+                        inner.style.opacity = '1.0'; // Stays solid
                         inner.style.filter = isGhostLocal ? 'grayscale(100%)' : 'none';
-                        inner.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
-                        m.getElement().style.zIndex = isGhostLocal ? '0' : '100';
+                        inner.style.boxShadow = '0 3px 6px rgba(0,0,0,0.3)';
+                        m.getElement().style.zIndex = isGhostLocal ? '50' : '100'; // Ghost drops to 50
                     }
                 }
             }
@@ -1396,44 +1399,49 @@ function drawPOI(r){
   const id = String(r.id);
   if (markersPOI.has(id)) return;
   
-  // 1. OUTER WRAPPER: Maintains Mapbox layout and hover hit-area
+  // OUTER WRAPPER: Pushed to bottom layer (z-index 10)
   const el = document.createElement('div');
   el.style.width = '34px';
   el.style.height = '34px';
   el.style.cursor = 'pointer';
-  el.style.zIndex = '2';
+  el.style.zIndex = '10'; 
 
-  // 2. INNER WRAPPER: Safely applies your CSS classes
   el.innerHTML = `
     <div class="pin pin--poi" style="width: 100%; height: 100%;">
         ${emojiForType(r.type)}
     </div>
   `;
 
-  // Apply hover effects via JS to guarantee they trigger correctly
   const inner = el.querySelector('.pin--poi');
   el.addEventListener('mouseenter', () => {
       inner.style.transform = 'scale(1.15)';
       inner.style.opacity = '1.0';
       inner.style.filter = 'none';
-      el.style.zIndex = '10';
+      el.style.zIndex = '20'; // Pops up slightly, but still under properties
   });
   
   el.addEventListener('mouseleave', () => {
-      inner.style.transform = ''; // Reverts to your muted CSS defaults
+      inner.style.transform = ''; 
       inner.style.opacity = '';
       inner.style.filter = '';
-      el.style.zIndex = '2';
+      el.style.zIndex = '10';
   });
 
-  const m = new mapboxgl.Marker({ element: el, anchor:'bottom' })
-    .setLngLat([r.lon, r.lat])
-    .setPopup(new mapboxgl.Popup({ offset:8 }).setHTML(`
+  const popupHtml = `
       <div style="font-size:13px; line-height:1.35">
         <div style="font-weight:700">${escapeHtml(r.name||'')}</div>
         <div class="meta">${escapeHtml(r.type||'')}</div>
         ${r.address ? `<div class="addr">${escapeHtml(r.address)}</div>` : ''}
-      </div>`))
+      </div>`;
+      
+  const popup = new mapboxgl.Popup({ offset:8 }).setHTML(popupHtml);
+  popup.on('open', () => {
+      if (popup.getElement()) popup.getElement().style.zIndex = '99999';
+  });
+
+  const m = new mapboxgl.Marker({ element: el, anchor:'bottom' })
+    .setLngLat([r.lon, r.lat])
+    .setPopup(popup)
     .addTo(map);
     
   markersPOI.set(id, m);
@@ -1602,13 +1610,12 @@ function toggleMarkerHot(id, on){
                               m2.getElement().style.zIndex = '105';
                           }
                       } else {
-                          // --- FIXED: Resetting back to 0.85 opacity ---
                           const isGhostLocal = otherProp._isHighlighted === false;
                           inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)';
-                          inner.style.opacity = isGhostLocal ? '0.85' : '1.0';
+                          inner.style.opacity = '1.0'; // Stays solid
                           inner.style.filter = isGhostLocal ? 'grayscale(100%)' : 'none';
-                          inner.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
-                          m2.getElement().style.zIndex = isGhostLocal ? '0' : '100';
+                          inner.style.boxShadow = '0 3px 6px rgba(0,0,0,0.3)';
+                          m2.getElement().style.zIndex = isGhostLocal ? '50' : '100'; // Ghost drops to 50
                       }
                   }
               }
@@ -1616,6 +1623,7 @@ function toggleMarkerHot(id, on){
       });
   }
 }
+
 function scrollCardIntoView(card){
   if (!card || !listPane) return;
 
