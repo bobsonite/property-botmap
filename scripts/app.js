@@ -32,25 +32,17 @@ const UNI_MASTER_LOCATIONS = {
 };
 const USE_SATELLITE = false; // flip to true for satellite hybrid
 
-// --- NEW MODULE: Campus Manager (Standardized Logo Sizes) ---
+// --- NEW MODULE: Campus Manager (HTML Markers for Uniform Logos) ---
 const CampusManager = {
   loading: new Set(),
-
-  loadImage(map, url) {
-    return new Promise((resolve, reject) => {
-      map.loadImage(url, (error, image) => {
-        if (error) reject(error);
-        else resolve(image);
-      });
-    });
-  },
+  markers: [], // We now keep track of our HTML markers here
+  zoomListenerAdded: false,
 
   async load(map, uniKey) {
     if (!uniKey) return;
     
     const safeKey = uniKey.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase().replace(/^_|_$/g, '');
     const sourceId = `src-${safeKey}`;
-    const logoId   = `logo-img-${safeKey}`;
 
     if (map.getSource(sourceId)) return;
     if (this.loading.has(safeKey)) return;
@@ -63,51 +55,104 @@ const CampusManager = {
       const data = await res.json();
       data.features.forEach(f => { f.properties.university_id = uniKey; });
 
-      let scale = 0.25; // Default fallback scale
-
-      // 2. Load Image & Calculate Standard Size
-      if (!map.hasImage(logoId)) {
-          try {
-              const img = await this.loadImage(map, `public/logos/${safeKey}.png`);
-              
-              // AUTO-SCALE LOGIC:
-              // We want every logo to be roughly 40px wide on screen.
-              // If image is 200px wide, scale = 40/200 = 0.2
-              // If image is 1000px wide, scale = 40/1000 = 0.04
-              const targetWidth = 45; 
-              scale = targetWidth / img.width;
-              
-              map.addImage(logoId, img);
-          } catch (err) {
-              console.warn(`Missing logo for: ${safeKey}`); 
-          }
-      }
-
       if (map.getSource(sourceId)) return;
       map.addSource(sourceId, { type: 'geojson', data });
 
       const initialVis = (typeof showCampuses !== 'undefined' && showCampuses) ? 'visible' : 'none';
-      const HANDOFF_ZOOM = 13;
+      const HANDOFF_ZOOM = 13; // Zoom level where logos swap to 3D buildings
 
-      // --- LAYER 1: THE LOGO (Standardized Size) ---
-      map.addLayer({
-        id: `logo-${safeKey}`,
-        type: 'symbol',
-        source: sourceId,
-        maxzoom: HANDOFF_ZOOM,
-        layout: {
-          'visibility': initialVis,
-          'icon-image': map.hasImage(logoId) ? logoId : 'college-15',
-          'icon-size': scale, // <--- We apply the calculated scale here!
-          'icon-allow-overlap': true,
-          'icon-ignore-placement': true
-        },
-        paint: {
-          'icon-opacity': 1
-        }
+      // --- 1. THE LOGO MARKERS (Now HTML DOM elements for CSS circles) ---
+      data.features.forEach(f => {
+          let cX = 0, cY = 0;
+          
+          // Calculate the geometric center of the campus to drop the pin
+          if (f.geometry.type === 'Polygon') {
+              const coords = f.geometry.coordinates[0];
+              let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+              coords.forEach(p => {
+                  if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+                  if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+              });
+              cX = (minX + maxX) / 2;
+              cY = (minY + maxY) / 2;
+          } else if (f.geometry.type === 'MultiPolygon') {
+              const coords = f.geometry.coordinates[0][0];
+              let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+              coords.forEach(p => {
+                  if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+                  if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+              });
+              cX = (minX + maxX) / 2;
+              cY = (minY + maxY) / 2;
+          }
+
+          if (cX !== 0 && cY !== 0) {
+              const el = document.createElement('div');
+              el.className = 'pin pin--uni-logo';
+              
+              // Force styling to perfectly match the property circles
+              Object.assign(el.style, {
+                  width: '32px',
+                  height: '32px',
+                  backgroundColor: 'white',
+                  borderRadius: '50%',
+                  border: '2px solid #3b82f6', // Mapbox blue for universities
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                  display: ((typeof showCampuses !== 'undefined' && showCampuses) && map.getZoom() < HANDOFF_ZOOM) ? 'flex' : 'none',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                  cursor: 'pointer',
+                  zIndex: '40',
+                  transition: 'transform 0.2s ease'
+              });
+
+              const logoUrl = `public/logos/${safeKey}.png`;
+              el.innerHTML = `
+                <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;">
+                  <span class="pin-emoji" style="display:none; font-size:18px;">🎓</span>
+                  <img src="${logoUrl}" alt="${uniKey}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.style.display='none'; this.previousElementSibling.style.display='block';">
+                </div>
+              `;
+
+              const m = new mapboxgl.Marker({ element: el, anchor: 'center' })
+                  .setLngLat([cX, cY])
+                  .addTo(map);
+              
+              this.markers.push({ key: safeKey, marker: m });
+
+              // Hover/Click for the new HTML marker
+              const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 15 });
+              el.addEventListener('mouseenter', () => {
+                  el.style.transform = 'scale(1.2)'; // Pop effect
+                  popup.setLngLat([cX, cY])
+                       .setHTML(`<div style="font-weight:700; color:#1e3a8a">${uniKey}</div>`)
+                       .addTo(map);
+              });
+              el.addEventListener('mouseleave', () => {
+                  el.style.transform = 'scale(1)';
+                  popup.remove();
+              });
+              el.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  map.flyTo({ center: [cX, cY], zoom: 14.5 }); // Fly in to see 3D buildings
+              });
+          }
       });
 
-      // --- LAYER 2: THE 3D BUILDING ---
+      // Manage visibility of HTML markers based on zoom level
+      if (!this.zoomListenerAdded) {
+          map.on('zoom', () => {
+              const currentZoom = map.getZoom();
+              const isToggledOn = typeof showCampuses !== 'undefined' && showCampuses;
+              this.markers.forEach(item => {
+                  item.marker.getElement().style.display = (isToggledOn && currentZoom < HANDOFF_ZOOM) ? 'flex' : 'none';
+              });
+          });
+          this.zoomListenerAdded = true;
+      }
+
+      // --- 2. THE 3D BUILDING (Appears Zoom 13+) ---
       map.addLayer({
         id: `fill-${safeKey}`,
         type: 'fill-extrusion',
@@ -122,7 +167,7 @@ const CampusManager = {
         }
       }, 'poi-label');
 
-      // --- LAYER 3: LABELS ---
+      // --- 3. LABELS (Appears Zoom 13+) ---
       map.addLayer({
         id: `label-${safeKey}`,
         type: 'symbol',
@@ -153,29 +198,26 @@ const CampusManager = {
   },
 
   addInteractions(map, safeKey, uniName) {
-    const logoLayer = `logo-${safeKey}`;
     const fillLayer = `fill-${safeKey}`;
     
-    const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 15 });
-
-    map.on('mouseenter', logoLayer, (e) => {
-        map.getCanvas().style.cursor = 'pointer';
-        popup.setLngLat(e.lngLat)
-             .setHTML(`<div style="font-weight:700; color:#1e3a8a">${uniName}</div>`)
-             .addTo(map);
-    });
-
-    map.on('mouseleave', logoLayer, () => {
-        map.getCanvas().style.cursor = '';
-        popup.remove();
-    });
-
+    // The 3D building click handler (Markers handle their own clicks now)
     map.on('click', fillLayer, (e) => {
+        const props = e.features[0].properties;
+        const subjects = props.subjects ? `<div class="meta" style="color:#64748b; margin-top:2px">${props.subjects}</div>` : '';
         new mapboxgl.Popup()
             .setLngLat(e.lngLat)
-            .setHTML(`<div style="font-weight:bold">${e.features[0].properties.name}</div>`)
+            .setHTML(`
+              <div style="font-size:13px; line-height:1.4">
+                <div style="font-weight:700; color:#1e3a8a">${props.name}</div>
+                <div style="font-size:11px; font-weight:600; color:#3b82f6; margin-top:1px">${props.university_id}</div>
+                ${subjects}
+              </div>
+            `)
             .addTo(map);
     });
+    
+    map.on('mouseenter', fillLayer, () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', fillLayer, () => map.getCanvas().style.cursor = '');
   }
 };
 
@@ -255,19 +297,25 @@ campusesToggle?.addEventListener('click', () => {
   campusesToggle.setAttribute('aria-pressed', String(showCampuses));
   
   const visibility = showCampuses ? 'visible' : 'none';
+  const currentZoom = map.getZoom();
   
+  // 1. Toggle the new HTML Markers (Logos)
+  if (CampusManager.markers) {
+      CampusManager.markers.forEach(item => {
+          item.marker.getElement().style.display = (showCampuses && currentZoom < 13) ? 'flex' : 'none';
+      });
+  }
+  
+  // 2. Toggle the Mapbox Layers (3D Buildings & Labels)
   if (uniIndex && uniIndex.campuses) {
       for (const [key, campus] of uniIndex.campuses.entries()) {
           const safeKey = campus.id.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase().replace(/^_|_$/g, '');
           
-          // 1. Toggle Logo (Zoomed Out)
-          if (map.getLayer(`logo-${safeKey}`)) map.setLayoutProperty(`logo-${safeKey}`, 'visibility', visibility);
-
-          // 2. Toggle Real Buildings (Zoomed In)
           if (map.getLayer(`fill-${safeKey}`)) map.setLayoutProperty(`fill-${safeKey}`, 'visibility', visibility);
-          
-          // 3. Toggle Labels
           if (map.getLayer(`label-${safeKey}`)) map.setLayoutProperty(`label-${safeKey}`, 'visibility', visibility);
+          
+          // Fallback cleanup in case the old logo layer is still cached
+          if (map.getLayer(`logo-${safeKey}`)) map.setLayoutProperty(`logo-${safeKey}`, 'visibility', visibility);
       }
   }
 });
@@ -550,24 +598,18 @@ function syncPOIMarkers(){
     return;
   }
   
-  // FIX: Use 'currentProps' (visible properties) instead of 'baseProps' (all properties)
-  // This prevents sending 500+ IDs to the database at once.
+  // Only fetch places for properties currently visible on the map/list
   const targetProps = currentProps.length ? currentProps : baseProps;
   if (!targetProps.length) return;
 
-  // Limit to top 20 visible properties to avoid map clutter and DB overload
-  const limitedProps = targetProps.slice(0, 20);
+  const limitedProps = targetProps.slice(0, 20); // Cap at 20 to prevent clutter
 
-  const centers = new Map(limitedProps.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
-  
-  // Use _legacy_propid if available (since google_points likely uses old IDs), fallback to propID
+  // Key centers by the legacy ID so the distance math connects with the DB
+  const centers = new Map(limitedProps.map(p => [String(p._legacy_propid || p.propID), { lat:p.lat, lon:p.lon }]));
   const ids = limitedProps.map(p => String(p._legacy_propid || p.propID));
   
-  console.log(`[POI] Fetching places for ${ids.length} properties...`);
-
   fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:5, radiusMeters:800 }, centers)
     .then(({ list }) => {
-      console.log(`[POI] Found ${list.length} places.`);
       clearPOIMarkers();
       list.forEach(drawPOI);
     })
@@ -771,7 +813,7 @@ async function fetchAllProps(){
   return out;
 }
 
-// POIs (Geospatial Matching instead of ID matching)
+// POIs (Using the new 'places' table)
 async function fetchPOIsForProps(
   propIDs,
   { types = ['cafe', 'bar', 'restaurant', 'gym', 'park'], perTypeLimit = 8, radiusMeters = 800 } = {},
@@ -779,67 +821,66 @@ async function fetchPOIsForProps(
 ) {
   if (!propIDs?.length) return { list: [], counts: new Map() };
 
-  // 1. Fetch POIs by Location (London) instead of disconnected ID
+  // 1. Query the 'places' table
   const { data, error } = await supabase
-    .from('google_points')
-    .select('uid, name, address, type_single, lat, long, rating')
-    .ilike('address', '%London%') // <--- FILTER: Only fetch rows where address contains "London"
-    .limit(3000); // Fetch a large batch to search through
+    .from('places')
+    .select('uid, place_name, address, type, propid, lat, long, rating')
+    .in('propid', propIDs.map(String))
+    .limit(2000);
 
   if (error) {
-    console.error('[supabase] google_points error', error);
+    console.error('[supabase] places error', error);
     return { list: [], counts: new Map() };
   }
 
   const want    = new Set(types.map(t => String(t).toLowerCase()));
-  const counts  = new Map(); // pid -> { cafe, bar, etc }
+  const counts  = new Map();
   const list    = [];
-  const perTypeByProp = new Map(); // Tracks limits per property
+  const perTypeByProp = new Map();
 
   for (const r of data || []) {
-    const t = String(r.type_single || '').toLowerCase();
+    const t = String(r.type || '').toLowerCase(); // Mapped from DB 'type'
     if (types.length && !want.has(t)) continue;
+
+    const pid = String(r.propid); 
+    if (!pid) continue;
 
     const lat = Number(r.lat);
     const lon = Number(r.long);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
-    // 2. SPATIAL MATCHING: Compare POI to all requested properties
-    for (const [pid, center] of centersByProp.entries()) {
-      const d = metersBetween(center, { lat, lon });
-      
-      // If the POI is mathematically within 800m of the property, link them together!
-      if (d <= radiusMeters) {
-        if (!counts.has(pid)) counts.set(pid, { cafe: 0, bar: 0, restaurant: 0, gym: 0, park: 0 });
-        if (!perTypeByProp.has(pid)) perTypeByProp.set(pid, new Map());
-        
-        const bucket = counts.get(pid);
-        const typeCounts = perTypeByProp.get(pid);
-        
-        // Update summary counts
-        if (t.includes('cafe') || t.includes('coffee'))         bucket.cafe++;
-        else if (t.includes('bar') || t.includes('pub'))        bucket.bar++;
-        else if (t.includes('restaurant') || t.includes('food')) bucket.restaurant++;
-        else if (t.includes('gym'))                             bucket.gym++;
-        else if (t.includes('park'))                            bucket.park++;
+    const center = centersByProp.get(pid);
+    const d      = center ? metersBetween(center, { lat, lon }) : null;
+    
+    // Safety check: ensure POI is physically near the property
+    if (center && d != null && d > radiusMeters) continue;
 
-        // Add to map list if under limit for this specific property
-        const used = typeCounts.get(t) || 0;
-        if (used < perTypeLimit) {
-          list.push({
-            id:        r.uid || `${pid}-${t}-${used}`,
-            name:      r.name,
-            address:   r.address,
-            type:      r.type_single,
-            propID:    pid, // Attach to the valid property ID
-            lat,
-            lon,
-            rating:    r.rating,
-            _distance_m: Math.round(d)
-          });
-          typeCounts.set(t, used + 1);
-        }
-      }
+    if (!counts.has(pid)) counts.set(pid, { cafe: 0, bar: 0, restaurant: 0, gym: 0, park: 0 });
+    if (!perTypeByProp.has(pid)) perTypeByProp.set(pid, new Map());
+    
+    const bucket = counts.get(pid);
+    const typeCounts = perTypeByProp.get(pid);
+    
+    if (t.includes('cafe') || t.includes('coffee'))         bucket.cafe++;
+    else if (t.includes('bar') || t.includes('pub'))        bucket.bar++;
+    else if (t.includes('restaurant') || t.includes('food')) bucket.restaurant++;
+    else if (t.includes('gym'))                             bucket.gym++;
+    else if (t.includes('park'))                            bucket.park++;
+
+    const used = typeCounts.get(t) || 0;
+    if (used < perTypeLimit) {
+      list.push({
+        id:        r.uid || `${pid}-${t}-${used}`,
+        name:      r.place_name, // Mapped from DB 'place_name'
+        address:   r.address,
+        type:      r.type,
+        propID:    pid,
+        lat,
+        lon,
+        rating:    r.rating,
+        _distance_m: d != null ? Math.round(d) : null
+      });
+      typeCounts.set(t, used + 1);
     }
   }
 
@@ -1741,7 +1782,7 @@ async function bootstrap(){
   const legacyIds = props.map(p => p._legacy_propid).filter(Boolean);
   const fetchIds = legacyIds.length > 0 ? legacyIds : props.map(p => String(p.propID));
 
-  const centers = new Map(props.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
+  const centers = new Map(props.map(p => [String(p._legacy_propid || p.propID), { lat:p.lat, lon:p.lon }]));
 
   // B. Fetch using Legacy IDs
   const { counts } = await fetchPOIsForProps(fetchIds, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:0, radiusMeters:800 }, centers);
