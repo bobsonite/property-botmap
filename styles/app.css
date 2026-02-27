@@ -123,8 +123,22 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
 }
 .pin--poi{
   z-index:2;
-  background:#ecfdf5;               /* pale green for POIs */
-  border-color:#10b981;             /* emerald */
+  background:#ecfdf5;               
+  border-color:#10b981;             
+  
+  /* UPDATED: Increased opacity so emojis don't fade into the map */
+  transform: scale(0.6);            
+  opacity: 0.85;                     
+  filter: grayscale(100%);          
+  transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease;
+}
+
+/* NEW: Full Color Hover State */
+.pin--poi:hover {
+  transform: scale(1.15) !important; /* Pop slightly larger than normal */
+  opacity: 1.0;                      /* Solid */
+  filter: none;                      /* Full color */
+  z-index: 10;
 }
 /* University Pin - Soft "Glass" Style */
 .pin.pin--uni {

@@ -32,10 +32,10 @@ const UNI_MASTER_LOCATIONS = {
 };
 const USE_SATELLITE = false; // flip to true for satellite hybrid
 
-// --- NEW MODULE: Campus Manager (HTML Markers for Uniform Logos) ---
+// --- NEW MODULE: Campus Manager (Wrappers & Group Hover) ---
 const CampusManager = {
   loading: new Set(),
-  markers: [], // We now keep track of our HTML markers here
+  markers: [], 
   zoomListenerAdded: false,
 
   async load(map, uniKey) {
@@ -59,13 +59,12 @@ const CampusManager = {
       map.addSource(sourceId, { type: 'geojson', data });
 
       const initialVis = (typeof showCampuses !== 'undefined' && showCampuses) ? 'visible' : 'none';
-      const HANDOFF_ZOOM = 13; // Zoom level where logos swap to 3D buildings
+      const HANDOFF_ZOOM = 13; 
 
-      // --- 1. THE LOGO MARKERS (Now HTML DOM elements for CSS circles) ---
+      // --- 1. THE LOGO MARKERS ---
       data.features.forEach(f => {
           let cX = 0, cY = 0;
           
-          // Calculate the geometric center of the campus to drop the pin
           if (f.geometry.type === 'Polygon') {
               const coords = f.geometry.coordinates[0];
               let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -87,29 +86,28 @@ const CampusManager = {
           }
 
           if (cX !== 0 && cY !== 0) {
+              // OUTER WRAPPER: Mapbox controls this. We do NOT scale it.
               const el = document.createElement('div');
-              el.className = 'pin pin--uni-logo';
-              
-              // Force styling to perfectly match the property circles
               Object.assign(el.style, {
                   width: '32px',
                   height: '32px',
-                  backgroundColor: 'white',
-                  borderRadius: '50%',
-                  border: '2px solid #3b82f6', // Mapbox blue for universities
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                  display: ((typeof showCampuses !== 'undefined' && showCampuses) && map.getZoom() < HANDOFF_ZOOM) ? 'flex' : 'none',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  overflow: 'hidden',
-                  cursor: 'pointer',
+                  display: ((typeof showCampuses !== 'undefined' && showCampuses) && map.getZoom() < HANDOFF_ZOOM) ? 'block' : 'none',
                   zIndex: '40',
-                  transition: 'transform 0.2s ease'
+                  cursor: 'pointer'
               });
 
               const logoUrl = `public/logos/${safeKey}.png`;
+              
+              // INNER WRAPPER: We control this. Default is small, faded, grayscale.
               el.innerHTML = `
-                <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;">
+                <div class="uni-logo-inner" style="
+                    width: 100%; height: 100%; 
+                    background-color: white; border-radius: 50%; 
+                    border: 2px solid #3b82f6; box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+                    display: flex; align-items: center; justify-content: center; overflow: hidden;
+                    transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease;
+                    transform: scale(0.6); opacity: 0.6; filter: grayscale(100%);
+                ">
                   <span class="pin-emoji" style="display:none; font-size:18px;">🎓</span>
                   <img src="${logoUrl}" alt="${uniKey}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.style.display='none'; this.previousElementSibling.style.display='block';">
                 </div>
@@ -119,34 +117,54 @@ const CampusManager = {
                   .setLngLat([cX, cY])
                   .addTo(map);
               
-              this.markers.push({ key: safeKey, marker: m });
+              this.markers.push({ key: safeKey, marker: m, el: el });
 
-              // Hover/Click for the new HTML marker
               const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, offset: 15 });
+              
+              // GROUP HOVER LOGIC
               el.addEventListener('mouseenter', () => {
-                  el.style.transform = 'scale(1.2)'; // Pop effect
-                  popup.setLngLat([cX, cY])
-                       .setHTML(`<div style="font-weight:700; color:#1e3a8a">${uniKey}</div>`)
-                       .addTo(map);
+                  CampusManager.markers.forEach(item => {
+                      if (item.key === safeKey) {
+                          const inner = item.el.querySelector('.uni-logo-inner');
+                          if (inner) {
+                              inner.style.transform = 'scale(1.15)'; // Pop big
+                              inner.style.opacity = '1.0';           // Solid
+                              inner.style.filter = 'none';           // Full Color
+                          }
+                          item.el.style.zIndex = '60'; // Bring to front
+                      }
+                  });
+                  popup.setLngLat([cX, cY]).setHTML(`<div style="font-weight:700; color:#1e3a8a">${uniKey}</div>`).addTo(map);
               });
+              
               el.addEventListener('mouseleave', () => {
-                  el.style.transform = 'scale(1)';
+                  CampusManager.markers.forEach(item => {
+                      if (item.key === safeKey) {
+                          const inner = item.el.querySelector('.uni-logo-inner');
+                          if (inner) {
+                              inner.style.transform = 'scale(0.6)'; // Shrink back
+                              inner.style.opacity = '0.6';
+                              inner.style.filter = 'grayscale(100%)';
+                          }
+                          item.el.style.zIndex = '40';
+                      }
+                  });
                   popup.remove();
               });
+              
               el.addEventListener('click', (e) => {
                   e.stopPropagation();
-                  map.flyTo({ center: [cX, cY], zoom: 14.5 }); // Fly in to see 3D buildings
+                  map.flyTo({ center: [cX, cY], zoom: 14.5 }); 
               });
           }
       });
 
-      // Manage visibility of HTML markers based on zoom level
       if (!this.zoomListenerAdded) {
           map.on('zoom', () => {
               const currentZoom = map.getZoom();
               const isToggledOn = typeof showCampuses !== 'undefined' && showCampuses;
               this.markers.forEach(item => {
-                  item.marker.getElement().style.display = (isToggledOn && currentZoom < HANDOFF_ZOOM) ? 'flex' : 'none';
+                  item.marker.getElement().style.display = (isToggledOn && currentZoom < HANDOFF_ZOOM) ? 'block' : 'none';
               });
           });
           this.zoomListenerAdded = true;
@@ -200,7 +218,6 @@ const CampusManager = {
   addInteractions(map, safeKey, uniName) {
     const fillLayer = `fill-${safeKey}`;
     
-    // The 3D building click handler (Markers handle their own clicks now)
     map.on('click', fillLayer, (e) => {
         const props = e.features[0].properties;
         const subjects = props.subjects ? `<div class="meta" style="color:#64748b; margin-top:2px">${props.subjects}</div>` : '';
@@ -1212,42 +1229,46 @@ function makePopupPoiSummary(a){
 
 function drawProperty(p){
   const id = String(p.propID);
-  
-  // 1. Create the Marker Element
-  const el = document.createElement('div');
-  el.className = 'pin pin--prop'; // Base class
-  
-  // 2. Determine Logo Path (Sanitize owner name)
-  // e.g. "Chapter Living" -> "chapterliving"
-  const safeOwner = p.owner ? String(p.owner).toLowerCase().replace(/[^a-z0-9]/g, '') : 'unknown';
-  const logoUrl = `public/logos/providers/${safeOwner}.png`; // Adjust path if you put them elsewhere
 
-  // 3. Build Inner HTML (Logo + Fallback Emoji)
-  // We use an <img> tag. If it fails to load, we hide it and show the emoji.
+  const el = document.createElement('div');
+  el.style.width = '32px';
+  el.style.height = '32px';
+  el.style.cursor = 'pointer';
+  el.style.zIndex = p._isHighlighted === false ? '0' : '100'; 
+
+  const safeOwner = p.owner ? String(p.owner).toLowerCase().replace(/[^a-z0-9]/g, '') : 'unknown';
+  const logoUrl = `public/logos/providers/${safeOwner}.png`;
+
+  // --- FIXED: Opacity bumped up, contrast drain removed ---
+  const isGhost = p._isHighlighted === false;
+  const defaultScale = isGhost ? 'scale(0.85)' : 'scale(1.1)';
+  const defaultOpacity = isGhost ? '0.85' : '1.0'; 
+  const defaultFilter = isGhost ? 'grayscale(100%)' : 'none';
+
   el.innerHTML = `
-    <div class="pin-icon-wrapper">
-      <span class="pin-emoji">🏠</span> 
-      <img src="${logoUrl}" alt="${safeOwner}" class="pin-logo" onerror="this.style.display='none'; this.previousElementSibling.style.display='block';" style="display: block;">
+    <div class="prop-inner" style="
+        width: 100%; height: 100%;
+        background-color: white; border-radius: 50%;
+        border: 2px solid #8b5cf6; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        overflow: hidden; display: flex; align-items: center; justify-content: center;
+        transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+        transform: ${defaultScale};
+        opacity: ${defaultOpacity};
+        filter: ${defaultFilter};
+    ">
+      <span class="pin-emoji" style="display:none; font-size:18px;">🏠</span>
+      <img src="${logoUrl}" alt="${safeOwner}"
+           style="width: 100%; height: 100%; object-fit: cover; display: block;"
+           onerror="this.style.display='none'; this.previousElementSibling.style.display='block';">
     </div>
   `;
-  // Note: CSS usually hides .pin-emoji by default if .pin-logo is showing. 
-  // The onerror script flips this logic if the image breaks.
 
-  // 4. Ghost Mode Styles
-  const isGhost = p._isHighlighted === false;
-  el.style.opacity    = isGhost ? '0.25' : '1.0';
-  el.style.zIndex     = isGhost ? '0' : '100';
-  el.style.filter     = isGhost ? 'grayscale(100%) contrast(70%)' : 'none';
-  el.style.transform  = isGhost ? 'scale(0.85)' : 'scale(1.2)';
-  el.style.transition = 'opacity 0.3s, transform 0.3s, filter 0.3s';
-
-  // 5. Popup Content (Same as before)
   const ownerHtml   = p.owner ? `<div class="meta">${escapeHtml(p.owner)}</div>` : '';
   const addrHtml    = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
   const uniHtml     = (() => {
     const u = p._nearestUni;
     if (!u || !u.name) return '';
-
     const timePart = formatWalkMins(u.walkMins);
     const distPart = formatWalkDistance(u.walkMeters);
     let walkDetail = '';
@@ -1263,15 +1284,10 @@ function drawProperty(p){
       ? `<div class="meta transport-row">${escapeHtml(modeBits.join(' · '))}</div>`
       : '';
 
-    return `
-      <div class="meta">Nearest uni: ${escapeHtml(u.name)}</div>
-      ${modesHtml}
-    `;
+    return `<div class="meta">Nearest uni: ${escapeHtml(u.name)}</div>${modesHtml}`;
   })();
   const poiSummary  = p._amenityCounts ? makePopupPoiSummary(p._amenityCounts) : '';
-  const linkHtml    = p.link
-    ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Make a booking →</a></div>`
-    : '';
+  const linkHtml    = p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Make a booking →</a></div>` : '';
 
   const html = `
     <div style="font-size:13px; line-height:1.35; max-width:260px">
@@ -1283,7 +1299,6 @@ function drawProperty(p){
       ${linkHtml}
     </div>`;
 
-  // 6. Create/Update Marker
   const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
 
   marker
@@ -1293,20 +1308,15 @@ function drawProperty(p){
 
   markersProp.set(id, marker);
 
-  // 7. Interactions
   const hoverLabel = p.property || 'Property';
-  
+
   el.addEventListener('mouseenter', (e)=> {
     showTip(hoverLabel, e.clientX, e.clientY);
     if (hoverTimer) clearTimeout(hoverTimer);
 
-    // --- HOVER LINE LOGIC ---
     const u = p._nearestUni;
     if (u && u.buildingLat && u.buildingLon) {
-        const lineData = {
-            type: 'Feature',
-            geometry: { type: 'LineString', coordinates: [[p.lon, p.lat], [u.buildingLon, u.buildingLat]] }
-        };
+        const lineData = { type: 'Feature', geometry: { type: 'LineString', coordinates: [[p.lon, p.lat], [u.buildingLon, u.buildingLat]] } };
         if (map.getSource('hover-line-src')) {
             map.getSource('hover-line-src').setData(lineData);
         } else {
@@ -1317,32 +1327,105 @@ function drawProperty(p){
             });
         }
     }
-    // -----------------------
 
-    hoverTimer = setTimeout(() => {
-        toggleCardHot(id, true);
-    }, 350);
+    const hoveredOwner = p.owner;
+    if (hoveredOwner) {
+        baseProps.forEach(otherProp => {
+            if (otherProp.owner === hoveredOwner) {
+                const m = markersProp.get(String(otherProp.propID));
+                if (m) {
+                    const inner = m.getElement().querySelector('.prop-inner');
+                    if (inner) {
+                        if (otherProp.propID === p.propID) {
+                            inner.style.transform = 'scale(1.4)';  
+                            inner.style.opacity = '1.0';           
+                            inner.style.filter = 'none';           
+                            inner.style.boxShadow = '0 4px 12px rgba(88, 28, 135, 0.4)'; 
+                            m.getElement().style.zIndex = '110';   
+                        } else {
+                            const isGhostLocal = otherProp._isHighlighted === false;
+                            inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)'; 
+                            inner.style.opacity = '1.0';           
+                            inner.style.filter = 'none';           
+                            inner.style.boxShadow = '0 4px 12px rgba(88, 28, 135, 0.2)'; 
+                            m.getElement().style.zIndex = '105';   
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    hoverTimer = setTimeout(() => { toggleCardHot(id, true); }, 350);
   });
 
-  el.addEventListener('mousemove', (e)=> {
-    showTip(hoverLabel, e.clientX, e.clientY);
-  });
+  el.addEventListener('mousemove', (e)=> showTip(hoverLabel, e.clientX, e.clientY));
 
   el.addEventListener('mouseleave', ()=> {
     if (hoverTimer) clearTimeout(hoverTimer);
     toggleCardHot(id, false);
     hideTip();
-    
-    // Remove Hover Line
+
     if (map.getLayer('hover-line')) map.removeLayer('hover-line');
     if (map.getSource('hover-line-src')) map.removeSource('hover-line-src');
+
+    const hoveredOwner = p.owner;
+    if (hoveredOwner) {
+        baseProps.forEach(otherProp => {
+            if (otherProp.owner === hoveredOwner) {
+                const m = markersProp.get(String(otherProp.propID));
+                if (m) {
+                    const inner = m.getElement().querySelector('.prop-inner');
+                    if (inner) {
+                        // --- FIXED: Resetting back to 0.85 opacity ---
+                        const isGhostLocal = otherProp._isHighlighted === false;
+                        inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)';
+                        inner.style.opacity = isGhostLocal ? '0.85' : '1.0';
+                        inner.style.filter = isGhostLocal ? 'grayscale(100%)' : 'none';
+                        inner.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+                        m.getElement().style.zIndex = isGhostLocal ? '0' : '100';
+                    }
+                }
+            }
+        });
+    }
   });
 }
 
 function drawPOI(r){
   const id = String(r.id);
   if (markersPOI.has(id)) return;
-  const el = makePin('pin--poi', emojiForType(r.type));
+  
+  // 1. OUTER WRAPPER: Maintains Mapbox layout and hover hit-area
+  const el = document.createElement('div');
+  el.style.width = '34px';
+  el.style.height = '34px';
+  el.style.cursor = 'pointer';
+  el.style.zIndex = '2';
+
+  // 2. INNER WRAPPER: Safely applies your CSS classes
+  el.innerHTML = `
+    <div class="pin pin--poi" style="width: 100%; height: 100%;">
+        ${emojiForType(r.type)}
+    </div>
+  `;
+
+  // Apply hover effects via JS to guarantee they trigger correctly
+  const inner = el.querySelector('.pin--poi');
+  el.addEventListener('mouseenter', () => {
+      inner.style.transform = 'scale(1.15)';
+      inner.style.opacity = '1.0';
+      inner.style.filter = 'none';
+      el.style.zIndex = '10';
+  });
+  
+  el.addEventListener('mouseleave', () => {
+      inner.style.transform = ''; // Reverts to your muted CSS defaults
+      inner.style.opacity = '';
+      inner.style.filter = '';
+      el.style.zIndex = '2';
+  });
+
   const m = new mapboxgl.Marker({ element: el, anchor:'bottom' })
     .setLngLat([r.lon, r.lat])
     .setPopup(new mapboxgl.Popup({ offset:8 }).setHTML(`
@@ -1352,6 +1435,7 @@ function drawPOI(r){
         ${r.address ? `<div class="addr">${escapeHtml(r.address)}</div>` : ''}
       </div>`))
     .addTo(map);
+    
   markersPOI.set(id, m);
 }
 
@@ -1490,7 +1574,47 @@ function renderList(props){
 function toggleMarkerHot(id, on){
   const m = markersProp.get(String(id));
   if (!m) return;
-  m.getElement().classList.toggle('is-hot', !!on);
+
+  const p = baseProps.find(prop => String(prop.propID) === String(id));
+  if (!p) return;
+
+  const owner = p.owner;
+  if (owner) {
+      baseProps.forEach(otherProp => {
+          if (otherProp.owner === owner) {
+              const m2 = markersProp.get(String(otherProp.propID));
+              if (m2) {
+                  const inner = m2.getElement().querySelector('.prop-inner');
+                  if (inner) {
+                      if (on) {
+                          if (otherProp.propID === p.propID) {
+                              inner.style.transform = 'scale(1.4)';
+                              inner.style.opacity = '1.0';
+                              inner.style.filter = 'none';
+                              inner.style.boxShadow = '0 4px 12px rgba(88, 28, 135, 0.4)';
+                              m2.getElement().style.zIndex = '110';
+                          } else {
+                              const isGhostLocal = otherProp._isHighlighted === false;
+                              inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)';
+                              inner.style.opacity = '1.0';
+                              inner.style.filter = 'none';
+                              inner.style.boxShadow = '0 4px 12px rgba(88, 28, 135, 0.2)';
+                              m2.getElement().style.zIndex = '105';
+                          }
+                      } else {
+                          // --- FIXED: Resetting back to 0.85 opacity ---
+                          const isGhostLocal = otherProp._isHighlighted === false;
+                          inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)';
+                          inner.style.opacity = isGhostLocal ? '0.85' : '1.0';
+                          inner.style.filter = isGhostLocal ? 'grayscale(100%)' : 'none';
+                          inner.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+                          m2.getElement().style.zIndex = isGhostLocal ? '0' : '100';
+                      }
+                  }
+              }
+          }
+      });
+  }
 }
 function scrollCardIntoView(card){
   if (!card || !listPane) return;
