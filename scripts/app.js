@@ -549,11 +549,25 @@ function syncPOIMarkers(){
     clearPOIMarkers();
     return;
   }
-  if (!baseProps.length) return;
-  const centers = new Map(baseProps.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
-  const ids = baseProps.map(p => String(p.propID));
-  fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:8, radiusMeters:800 }, centers)
+  
+  // FIX: Use 'currentProps' (visible properties) instead of 'baseProps' (all properties)
+  // This prevents sending 500+ IDs to the database at once.
+  const targetProps = currentProps.length ? currentProps : baseProps;
+  if (!targetProps.length) return;
+
+  // Limit to top 20 visible properties to avoid map clutter and DB overload
+  const limitedProps = targetProps.slice(0, 20);
+
+  const centers = new Map(limitedProps.map(p => [String(p.propID), { lat:p.lat, lon:p.lon }]));
+  
+  // Use _legacy_propid if available (since google_points likely uses old IDs), fallback to propID
+  const ids = limitedProps.map(p => String(p._legacy_propid || p.propID));
+  
+  console.log(`[POI] Fetching places for ${ids.length} properties...`);
+
+  fetchPOIsForProps(ids, { types:['cafe','bar','restaurant','gym','park'], perTypeLimit:5, radiusMeters:800 }, centers)
     .then(({ list }) => {
+      console.log(`[POI] Found ${list.length} places.`);
       clearPOIMarkers();
       list.forEach(drawPOI);
     })
@@ -757,7 +771,7 @@ async function fetchAllProps(){
   return out;
 }
 
-// POIs (Assumption: google_points now uses ably_code? If not, we might need to change this)
+// POIs (Geospatial Matching instead of ID matching)
 async function fetchPOIsForProps(
   propIDs,
   { types = ['cafe', 'bar', 'restaurant', 'gym', 'park'], perTypeLimit = 8, radiusMeters = 800 } = {},
@@ -765,13 +779,12 @@ async function fetchPOIsForProps(
 ) {
   if (!propIDs?.length) return { list: [], counts: new Map() };
 
-  // Note: If google_points still uses the old ID, we would need to map them. 
-  // For now, I am assuming consistency with the new scheme.
+  // 1. Fetch POIs by Location (London) instead of disconnected ID
   const { data, error } = await supabase
     .from('google_points')
-    .select('uid, name, address, type_single, propid, lat, long, rating')
-    .in('propid', propIDs.map(String)) 
-    .limit(2000);
+    .select('uid, name, address, type_single, lat, long, rating')
+    .ilike('address', '%London%') // <--- FILTER: Only fetch rows where address contains "London"
+    .limit(3000); // Fetch a large batch to search through
 
   if (error) {
     console.error('[supabase] google_points error', error);
@@ -779,50 +792,54 @@ async function fetchPOIsForProps(
   }
 
   const want    = new Set(types.map(t => String(t).toLowerCase()));
-  const perType = new Map();
-  const counts  = new Map();
+  const counts  = new Map(); // pid -> { cafe, bar, etc }
   const list    = [];
+  const perTypeByProp = new Map(); // Tracks limits per property
 
   for (const r of data || []) {
     const t = String(r.type_single || '').toLowerCase();
     if (types.length && !want.has(t)) continue;
 
-    // We assume 'propid' in this table now contains the ably_code
-    const pid = String(r.propid); 
-    if (!pid) continue;
-
     const lat = Number(r.lat);
     const lon = Number(r.long);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
-    const center = centersByProp.get(pid);
-    const d      = center ? metersBetween(center, { lat, lon }) : null;
-    if (center && d != null && d > radiusMeters) continue;
+    // 2. SPATIAL MATCHING: Compare POI to all requested properties
+    for (const [pid, center] of centersByProp.entries()) {
+      const d = metersBetween(center, { lat, lon });
+      
+      // If the POI is mathematically within 800m of the property, link them together!
+      if (d <= radiusMeters) {
+        if (!counts.has(pid)) counts.set(pid, { cafe: 0, bar: 0, restaurant: 0, gym: 0, park: 0 });
+        if (!perTypeByProp.has(pid)) perTypeByProp.set(pid, new Map());
+        
+        const bucket = counts.get(pid);
+        const typeCounts = perTypeByProp.get(pid);
+        
+        // Update summary counts
+        if (t.includes('cafe') || t.includes('coffee'))         bucket.cafe++;
+        else if (t.includes('bar') || t.includes('pub'))        bucket.bar++;
+        else if (t.includes('restaurant') || t.includes('food')) bucket.restaurant++;
+        else if (t.includes('gym'))                             bucket.gym++;
+        else if (t.includes('park'))                            bucket.park++;
 
-    if (!counts.has(pid)) {
-      counts.set(pid, { cafe: 0, bar: 0, restaurant: 0, gym: 0, park: 0 });
-    }
-    const bucket = counts.get(pid);
-    if (t.includes('cafe') || t.includes('coffee'))         bucket.cafe++;
-    else if (t.includes('bar') || t.includes('pub'))        bucket.bar++;
-    else if (t.includes('restaurant') || t.includes('food')) bucket.restaurant++;
-    else if (t.includes('gym'))                             bucket.gym++;
-    else if (t.includes('park'))                            bucket.park++;
-
-    const used = perType.get(t) || 0;
-    if (used < perTypeLimit) {
-      list.push({
-        id:        r.uid || `${pid}-${t}-${used}`,
-        name:      r.name,
-        address:   r.address,
-        type:      r.type_single,
-        propID:    pid,
-        lat,
-        lon,
-        rating:    r.rating,
-        _distance_m: d != null ? Math.round(d) : null
-      });
-      perType.set(t, used + 1);
+        // Add to map list if under limit for this specific property
+        const used = typeCounts.get(t) || 0;
+        if (used < perTypeLimit) {
+          list.push({
+            id:        r.uid || `${pid}-${t}-${used}`,
+            name:      r.name,
+            address:   r.address,
+            type:      r.type_single,
+            propID:    pid, // Attach to the valid property ID
+            lat,
+            lon,
+            rating:    r.rating,
+            _distance_m: Math.round(d)
+          });
+          typeCounts.set(t, used + 1);
+        }
+      }
     }
   }
 
