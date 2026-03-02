@@ -32,7 +32,27 @@ const UNI_MASTER_LOCATIONS = {
 };
 const USE_SATELLITE = false; // flip to true for satellite hybrid
 
-// --- NEW MODULE: Campus Manager (Wrappers & Group Hover) ---
+// --- NEW MODULE: Campus Manager (Always-On Monograms) ---
+
+// Official Acronyms and Brand Colors for the Universities
+const UNI_BRANDING = {
+  "University of Westminster":          { abbr: "UoW",  color: "#005596" },
+  "London School of Economics (LSE)":   { abbr: "LSE",  color: "#D32135" },
+  "Regent’s University London":         { abbr: "REG",  color: "#E2A42F" },
+  "King's College London":              { abbr: "KCL",  color: "#E5243B" },
+  "London South Bank University":       { abbr: "LSBU", color: "#002F6C" },
+  "Middlesex University London":        { abbr: "MDX",  color: "#18204D" },
+  "Imperial College London":            { abbr: "ICL",  color: "#003E74" },
+  "Brunel University London":           { abbr: "BRU",  color: "#003366" },
+  "University of Greenwich":            { abbr: "GRE",  color: "#004B87" },
+  "University of the Arts London (UAL)":{ abbr: "UAL",  color: "#000000" },
+  "Queen Mary University of London":    { abbr: "QMUL", color: "#002147" },
+  "City, University of London":         { abbr: "CITY", color: "#D11520" },
+  "Goldsmiths, University of London":   { abbr: "GOLD", color: "#000000" },
+  "SOAS University of London":          { abbr: "SOAS", color: "#19365D" },
+  "University College London (UCL)":    { abbr: "UCL",  color: "#5C2483" }
+};
+
 const CampusManager = {
   loading: new Set(),
   markers: [], 
@@ -58,10 +78,10 @@ const CampusManager = {
       if (map.getSource(sourceId)) return;
       map.addSource(sourceId, { type: 'geojson', data });
 
-      const initialVis = (typeof showCampuses !== 'undefined' && showCampuses) ? 'visible' : 'none';
       const HANDOFF_ZOOM = 13; 
+      const brand = UNI_BRANDING[uniKey] || { abbr: "UNI", color: "#3b82f6" }; // Fallback
 
-      // --- 1. THE LOGO MARKERS ---
+      // --- 1. THE MONOGRAM MARKERS ---
       data.features.forEach(f => {
           let cX = 0, cY = 0;
           
@@ -90,24 +110,23 @@ const CampusManager = {
               Object.assign(el.style, {
                   width: '32px',
                   height: '32px',
-                  display: ((typeof showCampuses !== 'undefined' && showCampuses) && map.getZoom() < HANDOFF_ZOOM) ? 'block' : 'none',
-                  zIndex: '30', // Middle Layer
+                  display: map.getZoom() < HANDOFF_ZOOM ? 'block' : 'none', // ALWAYS ON
+                  zIndex: '30', 
                   cursor: 'pointer'
               });
 
-              const logoUrl = `public/logos/${safeKey}.png`;
-              
+              // Pure CSS Monogram: Small, vibrant background, thin white border, no greyscale needed
               el.innerHTML = `
                 <div class="uni-logo-inner" style="
                     width: 100%; height: 100%; 
-                    background-color: white; border-radius: 50%; 
-                    border: 2px solid #3b82f6; box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
-                    display: flex; align-items: center; justify-content: center; overflow: hidden;
-                    transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease;
-                    transform: scale(0.6); opacity: 0.6; filter: grayscale(100%);
+                    background-color: ${brand.color}; border-radius: 50%; 
+                    border: 1.5px solid rgba(255,255,255,0.9); box-shadow: 0 2px 4px rgba(0,0,0,0.15); 
+                    display: flex; align-items: center; justify-content: center;
+                    transition: transform 0.2s ease, opacity 0.2s ease;
+                    transform: scale(0.7); opacity: 0.9;
+                    color: #ffffff; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;
                 ">
-                  <span class="pin-emoji" style="display:none; font-size:18px;">🎓</span>
-                  <img src="${logoUrl}" alt="${uniKey}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.style.display='none'; this.previousElementSibling.style.display='block';">
+                  ${brand.abbr}
                 </div>
               `;
 
@@ -124,11 +143,10 @@ const CampusManager = {
                       if (item.key === safeKey) {
                           const inner = item.el.querySelector('.uni-logo-inner');
                           if (inner) {
-                              inner.style.transform = 'scale(1.15)'; 
+                              inner.style.transform = 'scale(1.15)'; // Pop up
                               inner.style.opacity = '1.0';           
-                              inner.style.filter = 'none';           
                           }
-                          item.el.style.zIndex = '40'; // Middle Layer Hover
+                          item.el.style.zIndex = '40'; 
                       }
                   });
               });
@@ -142,9 +160,8 @@ const CampusManager = {
                       if (item.key === safeKey) {
                           const inner = item.el.querySelector('.uni-logo-inner');
                           if (inner) {
-                              inner.style.transform = 'scale(0.6)'; 
-                              inner.style.opacity = '0.6';
-                              inner.style.filter = 'grayscale(100%)';
+                              inner.style.transform = 'scale(0.7)'; // Shrink back down
+                              inner.style.opacity = '0.9';
                           }
                           item.el.style.zIndex = '30';
                       }
@@ -158,12 +175,12 @@ const CampusManager = {
           }
       });
 
+      // Manage visibility based ONLY on zoom level now
       if (!this.zoomListenerAdded) {
           map.on('zoom', () => {
               const currentZoom = map.getZoom();
-              const isToggledOn = typeof showCampuses !== 'undefined' && showCampuses;
               this.markers.forEach(item => {
-                  item.marker.getElement().style.display = (isToggledOn && currentZoom < HANDOFF_ZOOM) ? 'block' : 'none';
+                  item.marker.getElement().style.display = currentZoom < HANDOFF_ZOOM ? 'block' : 'none';
               });
           });
           this.zoomListenerAdded = true;
@@ -175,9 +192,9 @@ const CampusManager = {
         type: 'fill-extrusion',
         source: sourceId,
         minzoom: HANDOFF_ZOOM,
-        layout: { 'visibility': initialVis },
+        layout: { 'visibility': 'visible' },
         paint: {
-          'fill-extrusion-color': '#2563eb',
+          'fill-extrusion-color': brand.color, // Color the 3D building to match the brand!
           'fill-extrusion-height': 20, 
           'fill-extrusion-opacity': 0.9,
           'fill-extrusion-base': 0
@@ -191,7 +208,7 @@ const CampusManager = {
         source: sourceId, 
         minzoom: HANDOFF_ZOOM,
         layout: {
-          'visibility': initialVis,
+          'visibility': 'visible',
           'text-field': ['get', 'name'],
           'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
           'text-size': 11,
@@ -199,7 +216,7 @@ const CampusManager = {
           'text-anchor': 'top'
         },
         paint: {
-          'text-color': '#1e3a8a',
+          'text-color': brand.color,
           'text-halo-color': '#ffffff',
           'text-halo-width': 2
         }
@@ -304,37 +321,6 @@ const savedCountEl  = document.getElementById('savedCount');
 const savedPanel    = document.getElementById('savedPanel');
 const placesToggle  = document.getElementById('placesToggle');
 
-/* Campuses toggle */
-const campusesToggle = document.getElementById('campusesToggle');
-let showCampuses = false; 
-
-campusesToggle?.addEventListener('click', () => {
-  showCampuses = !showCampuses;
-  campusesToggle.setAttribute('aria-pressed', String(showCampuses));
-  
-  const visibility = showCampuses ? 'visible' : 'none';
-  const currentZoom = map.getZoom();
-  
-  // 1. Toggle the new HTML Markers (Logos)
-  if (CampusManager.markers) {
-      CampusManager.markers.forEach(item => {
-          item.marker.getElement().style.display = (showCampuses && currentZoom < 13) ? 'flex' : 'none';
-      });
-  }
-  
-  // 2. Toggle the Mapbox Layers (3D Buildings & Labels)
-  if (uniIndex && uniIndex.campuses) {
-      for (const [key, campus] of uniIndex.campuses.entries()) {
-          const safeKey = campus.id.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase().replace(/^_|_$/g, '');
-          
-          if (map.getLayer(`fill-${safeKey}`)) map.setLayoutProperty(`fill-${safeKey}`, 'visibility', visibility);
-          if (map.getLayer(`label-${safeKey}`)) map.setLayoutProperty(`label-${safeKey}`, 'visibility', visibility);
-          
-          // Fallback cleanup in case the old logo layer is still cached
-          if (map.getLayer(`logo-${safeKey}`)) map.setLayoutProperty(`logo-${safeKey}`, 'visibility', visibility);
-      }
-  }
-});
 
 /* Filters collapse */
 filtersToggle?.addEventListener('click', ()=>{
