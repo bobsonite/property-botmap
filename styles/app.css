@@ -549,17 +549,36 @@ button.pill-ghost[aria-pressed="true"]{
 }
 
 /* Floating action buttons (mobile); hidden on desktop below */
-.fab{
+.fab {
   position:absolute;
-  /* +24px lift to clear Android gesture bar; still honours safe area */
   bottom:calc(36px + env(safe-area-inset-bottom, 0px));
   width:48px; height:48px; border-radius:50%;
   border:none; background:#111827; color:#fff;
   box-shadow:0 8px 24px rgba(0,0,0,.25);
-  font-size:22px; cursor:pointer; z-index:6;
+  font-size:22px; cursor:pointer; 
+  /* Must be higher than the sheets (999999) to remain tappable */
+  z-index: 9999999; 
+  transition: bottom 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease, background 0.2s ease;
 }
 #toggleChat{ left:12px; }
 #toggleList{ right:12px; }
+
+/* 🌟 MAGIC UX: Make the active FAB ride the sheet upwards, and hide the inactive one! */
+#botPane.active ~ #toggleChat {
+  bottom: calc(75dvh + 12px); /* Floats exactly above the Chat sheet */
+  background: var(--accent);  /* Turns purple to indicate it is now a "Close" button */
+}
+#botPane.active ~ #toggleList {
+  opacity: 0; pointer-events: none; /* Hide the properties button to prevent clutter */
+}
+
+#listPane.active ~ #toggleList {
+  bottom: calc(75dvh + 12px); /* Floats exactly above the Properties sheet */
+  background: var(--accent);
+}
+#listPane.active ~ #toggleChat {
+  opacity: 0; pointer-events: none; /* Hide the chat button to prevent clutter */
+}
 
 /* Mobile/Tablet sheet header (hidden on desktop) */
 .sheet-header{
