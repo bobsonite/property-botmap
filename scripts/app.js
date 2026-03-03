@@ -71,7 +71,12 @@ const CampusManager = {
       this.loading.add(safeKey);
       
       const res = await fetch(`public/campuses/${safeKey}.json`);
-      if (!res.ok) { this.loading.delete(safeKey); return; }
+      if (!res.ok) { 
+          // FIXED: Will now scream in the console if the filename is slightly wrong!
+          console.warn(`[CampusManager] Could not find file: public/campuses/${safeKey}.json`);
+          this.loading.delete(safeKey); 
+          return; 
+      }
       const data = await res.json();
       data.features.forEach(f => { f.properties.university_id = uniKey; });
 
@@ -79,103 +84,119 @@ const CampusManager = {
       map.addSource(sourceId, { type: 'geojson', data });
 
       const HANDOFF_ZOOM = 13; 
-      const brand = UNI_BRANDING[uniKey] || { abbr: "UNI", color: "#3b82f6" }; // Fallback
+      const brand = UNI_BRANDING[uniKey] || { abbr: "UNI", color: "#3b82f6" }; 
 
-      // --- 1. THE MONOGRAM MARKERS ---
+      // --- 1. SPATIAL CLUSTERING (Group nearby buildings into 1 Campus Pin) ---
+      const clusters = [];
+
       data.features.forEach(f => {
-          let cX = 0, cY = 0;
+          let cX = null, cY = null;
           
-          if (f.geometry.type === 'Polygon') {
-              const coords = f.geometry.coordinates[0];
-              let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-              coords.forEach(p => {
-                  if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
-                  if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
-              });
-              cX = (minX + maxX) / 2;
-              cY = (minY + maxY) / 2;
-          } else if (f.geometry.type === 'MultiPolygon') {
-              const coords = f.geometry.coordinates[0][0];
-              let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-              coords.forEach(p => {
-                  if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
-                  if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
-              });
-              cX = (minX + maxX) / 2;
-              cY = (minY + maxY) / 2;
-          }
+          // Quickly extract the first valid coordinate from the geometry
+          const findCoord = (arr) => {
+              if (!Array.isArray(arr)) return;
+              if (arr.length >= 2 && typeof arr[0] === 'number' && typeof arr[1] === 'number') {
+                  cX = arr[0]; cY = arr[1]; return;
+              }
+              for (let i = 0; i < arr.length; i++) {
+                  if (cX !== null) break;
+                  findCoord(arr[i]);
+              }
+          };
+          if (f.geometry && f.geometry.coordinates) findCoord(f.geometry.coordinates);
 
-          if (cX !== 0 && cY !== 0) {
-              const el = document.createElement('div');
-              Object.assign(el.style, {
-                  width: '32px',
-                  height: '32px',
-                  display: map.getZoom() < HANDOFF_ZOOM ? 'block' : 'none', // ALWAYS ON
-                  zIndex: '30', 
-                  cursor: 'pointer'
-              });
-
-              // Pure CSS Monogram: Small, vibrant background, thin white border, no greyscale needed
-              el.innerHTML = `
-                <div class="uni-logo-inner" style="
-                    width: 100%; height: 100%; 
-                    background-color: ${brand.color}; border-radius: 50%; 
-                    border: 1.5px solid rgba(255,255,255,0.9); box-shadow: 0 2px 4px rgba(0,0,0,0.15); 
-                    display: flex; align-items: center; justify-content: center;
-                    transition: transform 0.2s ease, opacity 0.2s ease;
-                    transform: scale(0.7); opacity: 0.9;
-                    color: #ffffff; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;
-                ">
-                  ${brand.abbr}
-                </div>
-              `;
-
-              const m = new mapboxgl.Marker({ element: el, anchor: 'center' })
-                  .setLngLat([cX, cY])
-                  .addTo(map);
-              
-              this.markers.push({ key: safeKey, marker: m, el: el });
-
-              el.addEventListener('mouseenter', (e) => {
-                  showTip(uniKey, e.clientX, e.clientY); 
+          if (cX !== null && cY !== null) {
+              let added = false;
+              for (let cluster of clusters) {
+                  // Rough distance calc (0.008 degrees is roughly 800 meters in London)
+                  const dx = cluster.cX - cX;
+                  const dy = cluster.cY - cY;
+                  const dist = Math.sqrt(dx*dx + dy*dy);
                   
-                  CampusManager.markers.forEach(item => {
-                      if (item.key === safeKey) {
-                          const inner = item.el.querySelector('.uni-logo-inner');
-                          if (inner) {
-                              inner.style.transform = 'scale(1.15)'; // Pop up
-                              inner.style.opacity = '1.0';           
-                          }
-                          item.el.style.zIndex = '40'; 
-                      }
-                  });
-              });
-              
-              el.addEventListener('mousemove', (e) => showTip(uniKey, e.clientX, e.clientY));
-              
-              el.addEventListener('mouseleave', () => {
-                  hideTip(); 
-                  
-                  CampusManager.markers.forEach(item => {
-                      if (item.key === safeKey) {
-                          const inner = item.el.querySelector('.uni-logo-inner');
-                          if (inner) {
-                              inner.style.transform = 'scale(0.7)'; // Shrink back down
-                              inner.style.opacity = '0.9';
-                          }
-                          item.el.style.zIndex = '30';
-                      }
-                  });
-              });
-              
-              el.addEventListener('click', (e) => {
-                  e.stopPropagation();
-                  map.flyTo({ center: [cX, cY], zoom: 14.5 }); 
-              });
+                  if (dist < 0.008) { 
+                      cluster.count++;
+                      // Shift the center of gravity slightly as more buildings are added
+                      cluster.cX = (cluster.cX * (cluster.count - 1) + cX) / cluster.count;
+                      cluster.cY = (cluster.cY * (cluster.count - 1) + cY) / cluster.count;
+                      added = true;
+                      break;
+                  }
+              }
+              if (!added) {
+                  clusters.push({ cX, cY, count: 1 });
+              }
           }
       });
 
-      // Manage visibility based ONLY on zoom level now
+      // --- 2. DRAW ONE MONOGRAM PER CLUSTER ---
+      clusters.forEach(cluster => {
+          const el = document.createElement('div');
+          Object.assign(el.style, {
+              width: '32px',
+              height: '32px',
+              // Hide the single pin when zoomed in, revealing the granular 3D buildings!
+              display: map.getZoom() < HANDOFF_ZOOM ? 'block' : 'none', 
+              zIndex: '30', 
+              cursor: 'pointer'
+          });
+
+          el.innerHTML = `
+            <div class="uni-logo-inner" style="
+                width: 100%; height: 100%; 
+                background-color: ${brand.color}; border-radius: 50%; 
+                border: 1.5px solid rgba(255,255,255,0.9); box-shadow: 0 2px 4px rgba(0,0,0,0.15); 
+                display: flex; align-items: center; justify-content: center;
+                transition: transform 0.2s ease, opacity 0.2s ease;
+                transform: scale(0.7); opacity: 0.9;
+                color: #ffffff; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;
+            ">
+              ${brand.abbr}
+            </div>
+          `;
+
+          const m = new mapboxgl.Marker({ element: el, anchor: 'center' })
+              .setLngLat([cluster.cX, cluster.cY])
+              .addTo(map);
+          
+          this.markers.push({ key: safeKey, marker: m, el: el });
+
+          el.addEventListener('mouseenter', (e) => {
+              showTip(uniKey, e.clientX, e.clientY); 
+              CampusManager.markers.forEach(item => {
+                  if (item.key === safeKey) {
+                      const inner = item.el.querySelector('.uni-logo-inner');
+                      if (inner) {
+                          inner.style.transform = 'scale(1.15)'; 
+                          inner.style.opacity = '1.0';           
+                      }
+                      item.el.style.zIndex = '40'; 
+                  }
+              });
+          });
+          
+          el.addEventListener('mousemove', (e) => showTip(uniKey, e.clientX, e.clientY));
+          
+          el.addEventListener('mouseleave', () => {
+              hideTip(); 
+              CampusManager.markers.forEach(item => {
+                  if (item.key === safeKey) {
+                      const inner = item.el.querySelector('.uni-logo-inner');
+                      if (inner) {
+                          inner.style.transform = 'scale(0.7)'; 
+                          inner.style.opacity = '0.9';
+                      }
+                      item.el.style.zIndex = '30';
+                  }
+              });
+          });
+          
+          el.addEventListener('click', (e) => {
+              e.stopPropagation();
+              map.flyTo({ center: [cluster.cX, cluster.cY], zoom: 14.5 }); 
+          });
+      });
+
+      // --- 3. MANAGE ZOOM VISIBILITY ---
       if (!this.zoomListenerAdded) {
           map.on('zoom', () => {
               const currentZoom = map.getZoom();
@@ -619,11 +640,10 @@ function syncPOIMarkers(){
 }
 
 function drawCampusMarkers(){
-  if (!uniIndex) return;
   // Clear any existing pins/markers to ensure a clean slate
   clearUniMarkers();
 
-  // Clean up old "spiderweb" line layers if they exist
+  // Clean up old "spiderweb" line layers if they exist (Legacy cleanup)
   const style = map.getStyle();
   if (style && style.layers) {
       style.layers.forEach(layer => {
@@ -634,13 +654,17 @@ function drawCampusMarkers(){
       });
   }
 
-  // --- NEW SIMPLIFIED LOOP ---
-  // Just load the building shapes. No Master Pins. No Lines.
-  for (const [key, campus] of uniIndex.campuses.entries()){
-    CampusManager.load(map, campus.id);
+  // --- FIXED: Load ALL universities from the master list, bypassing the DB gap ---
+  if (typeof UNI_BRANDING !== 'undefined') {
+      Object.keys(UNI_BRANDING).forEach(uniKey => {
+          CampusManager.load(map, uniKey);
+      });
+  } else if (uniIndex && uniIndex.campuses) {
+      // Fallback just in case UNI_BRANDING isn't loaded yet
+      for (const [key, campus] of uniIndex.campuses.entries()){
+          CampusManager.load(map, campus.id);
+      }
   }
-  
-  // Note: We no longer need the zoom listener since we aren't hiding/showing master pins anymore.
 }
 
 // Helper: Hides Master Pins when zoomed in
