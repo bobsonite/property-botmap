@@ -139,11 +139,11 @@ html, body { margin:0; height:100%; font-family: system-ui, -apple-system, Segoe
   text-decoration: none;
 }
 
-#botPane { width:28vw; min-width:320px; overflow:auto; }
+#botPane { width:28vw; min-width:280px; overflow:auto; } /* Relaxed min-width for laptops */
 #map     { flex:1; position:relative; }
 #listPane{
   width:25vw;
-  min-width:300px;
+  min-width:280px; /* Relaxed min-width for laptops */
   max-width:480px;
   overflow:auto;
   border-left:1px solid var(--panel-border-strong);
@@ -509,7 +509,7 @@ button.pill-ghost[aria-pressed="true"]{
 
 /* Mapbox popups honor theme */
 .mapboxgl-popup{
-  z-index:10 !important;      /* ensure popup sits above markers */
+  z-index: 99999 !important;  /* FORCE popup to pierce through the new map markers */
 }
 .mapboxgl-popup-content{
   background:var(--popup-bg) !important;
@@ -585,15 +585,15 @@ button.pill-ghost[aria-pressed="true"]{
   #listPane{
     position:absolute;
     left:0; right:0;
-    height:72dvh;
+    height:75dvh;
     bottom:-100%;
     background:var(--bg);
     border:1px solid var(--card-border);
     border-bottom:none;
-    border-radius:16px 16px 0 0;
+    border-radius:20px 20px 0 0; /* Softer, native app feel */
     box-shadow:0 -16px 40px rgba(0,0,0,.35);
-    transition:bottom .28s ease;
-    z-index:5;
+    transition:bottom .28s cubic-bezier(0.4, 0, 0.2, 1); /* Smoother slide animation */
+    z-index: 999999; /* FORCE panels above FABs and Mapbox Popups! */
     overflow:auto;
   }
   #botPane.active,
@@ -604,7 +604,23 @@ button.pill-ghost[aria-pressed="true"]{
   #listPane{ width:auto; min-width:0; max-width:none; }
 
   /* Show the sheet header on mobile/tablet */
-  .sheet-header{ display:flex; }
+  .sheet-header{ 
+    display:flex; 
+    padding-top: 18px; /* Make room for the drag handle */
+  }
+
+  /* Add native iOS/Android drag handle pill to sheets */
+  .sheet-header::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    background: #d1d5db;
+    border-radius: 4px;
+  }
 
   /* Keep filter bar sticky inside list sheet */
   #filtersBar{ position:sticky; top:0; z-index:1; }
