@@ -276,31 +276,31 @@ const CampusManager = {
 };
 
 /************ Session + bot ************/
-const newId = () =>
-  (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
-
+// 1. Start with a placeholder ID or URL ID
 const params = new URLSearchParams(location.search);
-
-// Prefer ?page_session_id=… but fall back to ?session_id=… for older links
-const rawPageSession = params.get('page_session_id') || params.get('session_id');
-const pageSessionId  = rawPageSession || newId();
-
-// Keep old name around so any existing code that uses `sessionId` still works
-const sessionId = pageSessionId;
-
-const sidEl = document.getElementById('sid');
-if (sidEl) sidEl.textContent = pageSessionId;
-
-// Debug: expose the session ID on window so we can poke it in DevTools
+let pageSessionId = params.get('session_id') || params.get('page_session_id') || 'initializing...';
 window.pageSessionId = pageSessionId;
 
-new window.Landbot.Container({
+const landbot = new window.Landbot.Container({
   container: '#botPane',
-  configUrl: LANDBOT_CONFIG_URL,
-  variables: {
-    page_session_id: pageSessionId,   // <-- what Landbot/n8n will use
-    session_id:      pageSessionId    // <-- optional, for any existing Landbot logic
-  }
+  configUrl: LANDBOT_CONFIG_URL
+});
+
+// 2. THE INSTANT LOCK: Capture the 9-digit ID the moment Landbot is ready
+landbot.on('ready', () => {
+  landbot.getVariable('session_id', (id) => {
+    window.pageSessionId = String(id);
+    lockedSessionId = String(id); // Instantly locks the gatekeeper
+    
+    // Sync URL so refresh works
+    params.set('session_id', id);
+    window.history.replaceState(null, '', `?${params.toString()}`);
+    
+    // Update UI
+    const sidEl = document.getElementById('sid');
+    if (sidEl) sidEl.textContent = id;
+    console.log(`🛡️ [Gatekeeper] Map pre-emptively locked to 9-digit ID: ${id}`);
+  });
 });
 
 /************ Map ************/
@@ -1792,8 +1792,8 @@ function applyFilters(){
 }
 
 /************ Ably subscription ************/
-// GLOBAL TRACKER: Keeps track of the session we are listening to
-let lockedSessionId = null;
+// GLOBAL TRACKER: Starts null, gets locked by the landbot.on('ready') block above
+let lockedSessionId = window.pageSessionId !== 'initializing...' ? window.pageSessionId : null;
 
 function parsePropIDs(raw){
   if (Array.isArray(raw)) return raw.map(v => String(v).trim()).filter(Boolean);
