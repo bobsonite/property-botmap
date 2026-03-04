@@ -281,17 +281,23 @@ const newId = () =>
 
 const params = new URLSearchParams(location.search);
 
-// Prefer ?page_session_id=… but fall back to ?session_id=… for older links
-const rawPageSession = params.get('page_session_id') || params.get('session_id');
-const pageSessionId  = rawPageSession || newId();
+// 1. Establish ID from URL or generate a fresh one
+let pageSessionId = params.get('session_id') || params.get('page_session_id');
 
-// Keep old name around so any existing code that uses `sessionId` still works
+if (!pageSessionId) {
+    pageSessionId = newId();
+    // 2. IMMEDIATE LOCK: Push this ID to the URL bar so refresh/tabs stay in sync
+    params.set('session_id', pageSessionId);
+    const newPath = window.location.pathname + '?' + params.toString();
+    history.replaceState(null, '', newPath);
+    console.log(`🔗 [Session] Created and locked to URL: ${pageSessionId}`);
+}
+
 const sessionId = pageSessionId;
-
 const sidEl = document.getElementById('sid');
 if (sidEl) sidEl.textContent = pageSessionId;
 
-// Debug: expose the session ID on window so we can poke it in DevTools
+// 3. Expose to window for the Gatekeeper to use below
 window.pageSessionId = pageSessionId;
 
 new window.Landbot.Container({
@@ -1792,8 +1798,9 @@ function applyFilters(){
 }
 
 /************ Ably subscription ************/
-// GLOBAL TRACKER: Keeps track of the session we are listening to
-let lockedSessionId = null;
+// GLOBAL TRACKER: Proactively lock this tab to the ID generated at the top of the script
+let lockedSessionId = window.pageSessionId; 
+console.log(`🛡️ [Gatekeeper] Map proactively filtering for ID: ${lockedSessionId}`);
 
 function parsePropIDs(raw){
   if (Array.isArray(raw)) return raw.map(v => String(v).trim()).filter(Boolean);
