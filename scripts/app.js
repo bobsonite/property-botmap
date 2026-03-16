@@ -60,104 +60,64 @@ const CampusManager = {
 
   async load(map, uniKey) {
     if (!uniKey) return;
-    
     const safeKey = uniKey.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase().replace(/^_|_$/g, '');
     const sourceId = `src-${safeKey}`;
+    let data;
 
-    if (map.getSource(sourceId)) return;
-    if (this.loading.has(safeKey)) return;
+    if (map.getSource(sourceId)) {
+        data = map.getSource(sourceId)._data;
+    } else {
+        if (this.loading.has(safeKey)) return;
+        try {
+            this.loading.add(safeKey);
+            const res = await fetch(`public/campuses/${safeKey}.json`);
+            if (!res.ok) { this.loading.delete(safeKey); return; }
+            data = await res.json();
+            data.features.forEach(f => { f.properties.university_id = uniKey; });
+            map.addSource(sourceId, { type: 'geojson', data });
+        } catch (e) { return; }
+        finally { this.loading.delete(safeKey); }
+    }
 
     try {
-      this.loading.add(safeKey);
-      
-      const res = await fetch(`public/campuses/${safeKey}.json`);
-      if (!res.ok) { 
-          // FIXED: Will now scream in the console if the filename is slightly wrong!
-          console.warn(`[CampusManager] Could not find file: public/campuses/${safeKey}.json`);
-          this.loading.delete(safeKey); 
-          return; 
-      }
-      const data = await res.json();
-      data.features.forEach(f => { f.properties.university_id = uniKey; });
-
-      if (map.getSource(sourceId)) return;
-      map.addSource(sourceId, { type: 'geojson', data });
-
       const HANDOFF_ZOOM = 13; 
       const brand = UNI_BRANDING[uniKey] || { abbr: "UNI", color: "#3b82f6" }; 
+      const hasActiveSearch = baseProps.some(p => p._isHighlighted);
 
-      // --- 1. SPATIAL CLUSTERING (Group nearby buildings into 1 Campus Pin) ---
       const clusters = [];
-
       data.features.forEach(f => {
           let cX = null, cY = null;
-          
-          // Quickly extract the first valid coordinate from the geometry
           const findCoord = (arr) => {
-              if (!Array.isArray(arr)) return;
-              if (arr.length >= 2 && typeof arr[0] === 'number' && typeof arr[1] === 'number') {
-                  cX = arr[0]; cY = arr[1]; return;
-              }
-              for (let i = 0; i < arr.length; i++) {
-                  if (cX !== null) break;
-                  findCoord(arr[i]);
-              }
+              if (arr.length >= 2 && typeof arr[0] === 'number') { cX = arr[0]; cY = arr[1]; return; }
+              for (let i = 0; i < arr.length; i++) { if (cX !== null) break; findCoord(arr[i]); }
           };
           if (f.geometry && f.geometry.coordinates) findCoord(f.geometry.coordinates);
-
-          if (cX !== null && cY !== null) {
+          if (cX !== null) {
               let added = false;
               for (let cluster of clusters) {
-                  // Rough distance calc (0.008 degrees is roughly 800 meters in London)
-                  const dx = cluster.cX - cX;
-                  const dy = cluster.cY - cY;
-                  const dist = Math.sqrt(dx*dx + dy*dy);
-                  
-                  if (dist < 0.008) { 
+                  if (Math.sqrt(Math.pow(cluster.cX-cX,2)+Math.pow(cluster.cY-cY,2)) < 0.008) {
                       cluster.count++;
-                      // Shift the center of gravity slightly as more buildings are added
-                      cluster.cX = (cluster.cX * (cluster.count - 1) + cX) / cluster.count;
-                      cluster.cY = (cluster.cY * (cluster.count - 1) + cY) / cluster.count;
-                      added = true;
-                      break;
+                      cluster.cX = (cluster.cX*(cluster.count-1)+cX)/cluster.count;
+                      cluster.cY = (cluster.cY*(cluster.count-1)+cY)/cluster.count;
+                      added = true; break;
                   }
               }
-              if (!added) {
-                  clusters.push({ cX, cY, count: 1 });
-              }
+              if (!added) clusters.push({ cX, cY, count: 1 });
           }
       });
 
-      // --- 2. DRAW ONE MONOGRAM PER CLUSTER ---
       clusters.forEach(cluster => {
           const el = document.createElement('div');
-          Object.assign(el.style, {
-              width: '32px',
-              height: '32px',
-              // Hide the single pin when zoomed in, revealing the granular 3D buildings!
-              display: map.getZoom() < HANDOFF_ZOOM ? 'block' : 'none', 
-              zIndex: '30', 
-              cursor: 'pointer'
-          });
+          const zIndexValue = hasActiveSearch ? '20' : '40';
+          Object.assign(el.style, { width: '32px', height: '32px', display: map.getZoom() < HANDOFF_ZOOM ? 'block' : 'none', zIndex: zIndexValue, cursor: 'pointer' });
 
-          el.innerHTML = `
-            <div class="uni-logo-inner" style="
-                width: 100%; height: 100%; 
-                background-color: ${brand.color}; border-radius: 50%; 
-                border: 1.5px solid rgba(255,255,255,0.9); box-shadow: 0 2px 4px rgba(0,0,0,0.15); 
-                display: flex; align-items: center; justify-content: center;
-                transition: transform 0.2s ease, opacity 0.2s ease;
-                transform: scale(0.7); opacity: 0.9;
-                color: #ffffff; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;
-            ">
-              ${brand.abbr}
-            </div>
-          `;
+          const uniScale   = !hasActiveSearch ? 'scale(0.85)' : 'scale(0.3)';
+          const uniFilter  = !hasActiveSearch ? 'none' : 'grayscale(100%)';
+          const uniOpacity = !hasActiveSearch ? '1.0' : '0.25';
+          const uniBorder  = !hasActiveSearch ? '1.5px solid white' : 'none';
 
-          const m = new mapboxgl.Marker({ element: el, anchor: 'center' })
-              .setLngLat([cluster.cX, cluster.cY])
-              .addTo(map);
-          
+          el.innerHTML = `<div class="uni-logo-inner" style="width:100%;height:100%;background-color:${brand.color};border-radius:50%;border:${uniBorder};box-shadow:0 2px 4px rgba(0,0,0,0.1);display:flex;align-items:center;justify-content:center;transition:all 0.3s ease;transform:${uniScale};opacity:${uniOpacity};filter:${uniFilter};color:white;font-size:10px;font-weight:800;">${!hasActiveSearch ? brand.abbr : ''}</div>`;
+          const m = new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat([cluster.cX, cluster.cY]).addTo(map);
           this.markers.push({ key: safeKey, marker: m, el: el });
 
           el.addEventListener('mouseenter', (e) => {
@@ -640,10 +600,24 @@ function syncPOIMarkers(){
 }
 
 function drawCampusMarkers(){
-  // Clear any existing pins/markers to ensure a clean slate
-  clearUniMarkers();
+  // 1. Clear existing markers from the Mapbox instance
+  if (markersUni && markersUni.size > 0) {
+      for (const m of markersUni.values()) m.remove();
+      markersUni.clear();
+  }
 
-  // Clean up old "spiderweb" line layers if they exist (Legacy cleanup)
+  // 2. Clear markers tracked inside the CampusManager
+  if (CampusManager.markers && CampusManager.markers.length > 0) {
+      CampusManager.markers.forEach(item => {
+          if (item.marker) item.marker.remove();
+      });
+      CampusManager.markers = [];
+  }
+
+  // 3. Reset the internal loading tracker so re-drawing is allowed
+  CampusManager.loading.clear();
+
+  // 4. Clean up legacy layers if they exist
   const style = map.getStyle();
   if (style && style.layers) {
       style.layers.forEach(layer => {
@@ -654,14 +628,13 @@ function drawCampusMarkers(){
       });
   }
 
-  // --- FIXED: Load ALL universities from the master list, bypassing the DB gap ---
+  // 5. Trigger the redraw with updated "Ghost/Active" logic
   if (typeof UNI_BRANDING !== 'undefined') {
       Object.keys(UNI_BRANDING).forEach(uniKey => {
           CampusManager.load(map, uniKey);
       });
   } else if (uniIndex && uniIndex.campuses) {
-      // Fallback just in case UNI_BRANDING isn't loaded yet
-      for (const [key, campus] of uniIndex.campuses.entries()){
+      for (const campus of uniIndex.campuses.values()){
           CampusManager.load(map, campus.id);
       }
   }
@@ -1249,19 +1222,25 @@ function drawProperty(p){
   const safeOwner = p.owner ? String(p.owner).toLowerCase().replace(/[^a-z0-9]/g, '') : 'unknown';
   const logoUrl = `public/logos/providers/${safeOwner}.png`;
 
+  // 1. Identify if we are in 'Search Results' mode or 'General Browsing' mode
+  const hasActiveSearch = baseProps.some(prop => prop._isHighlighted === true);
   const isGhost = p._isHighlighted === false;
-  const defaultScale = isGhost ? 'scale(0.85)' : 'scale(1.1)';
-  const defaultOpacity = '1.0'; // SOLID: No more transparency for properties!
-  const defaultFilter = isGhost ? 'grayscale(100%)' : 'none';
+
+  // Visuals Logic: 
+  // - If BROWSE mode: All properties are normal size (1.1) and colorful.
+  // - If SEARCH mode: Active are large (1.4) and colorful; Ghosts are tiny dots (0.3) and grayscale.
+  const defaultScale   = !hasActiveSearch ? 'scale(1.1)' : (isGhost ? 'scale(0.3)' : 'scale(1.4)');
+  const defaultOpacity = !hasActiveSearch ? '1.0' : (isGhost ? '0.4' : '1.0');
+  const defaultFilter  = !hasActiveSearch ? 'none' : (isGhost ? 'grayscale(100%)' : 'none');
 
   el.innerHTML = `
     <div class="prop-inner" style="
         width: 100%; height: 100%;
         background-color: white; border-radius: 50%;
-        border: 3px solid #8b5cf6; /* THICKER BORDER for extra pop */
-        box-shadow: 0 3px 6px rgba(0,0,0,0.3); /* Stronger default shadow */
+        border: 3px solid #8b5cf6;
+        box-shadow: 0 3px 6px rgba(0,0,0,0.3);
         overflow: hidden; display: flex; align-items: center; justify-content: center;
-        transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+        transition: transform 0.3s ease, opacity 0.3s ease, filter 0.3s ease;
         transform: ${defaultScale};
         opacity: ${defaultOpacity};
         filter: ${defaultFilter};
@@ -1273,6 +1252,7 @@ function drawProperty(p){
     </div>
   `;
 
+  // [Popup HTML logic truncated for brevity - keep your existing HTML string building code here]
   const ownerHtml   = p.owner ? `<div class="meta">${escapeHtml(p.owner)}</div>` : '';
   const addrHtml    = p.adress ? `<div class="addr">${escapeHtml(p.adress)}</div>` : '';
   const uniHtml     = (() => {
@@ -1283,93 +1263,33 @@ function drawProperty(p){
     let walkDetail = '';
     if (timePart && distPart) walkDetail = `${timePart} (${distPart})`;
     else walkDetail = timePart || distPart || '';
-
     const modeBits = [];
     if (walkDetail) modeBits.push(`🚶 ${walkDetail}`);
     if (u.cycleMins != null) modeBits.push(`🚲 ${u.cycleMins} min`);
     if (u.transportMins != null) modeBits.push(`🚇 ${u.transportMins} min`);
-
-    const modesHtml = modeBits.length
-      ? `<div class="meta transport-row">${escapeHtml(modeBits.join(' · '))}</div>`
-      : '';
-
+    const modesHtml = modeBits.length ? `<div class="meta transport-row">${escapeHtml(modeBits.join(' · '))}</div>` : '';
     return `<div class="meta">Nearest uni: ${escapeHtml(u.name)}</div>${modesHtml}`;
   })();
   const poiSummary  = p._amenityCounts ? makePopupPoiSummary(p._amenityCounts) : '';
   const linkHtml    = p.link ? `<div class="link"><a href="${p.link}" target="_blank" rel="noopener">Make a booking →</a></div>` : '';
 
-  const html = `
-    <div style="font-size:13px; line-height:1.35; max-width:260px">
-      <div style="font-weight:700">${escapeHtml(p.property||'')}</div>
-      ${ownerHtml}
-      ${addrHtml}
-      ${uniHtml}
-      ${poiSummary}
-      ${linkHtml}
-    </div>`;
+  const html = `<div style="font-size:13px; line-height:1.35; max-width:260px"><div style="font-weight:700">${escapeHtml(p.property||'')}</div>${ownerHtml}${addrHtml}${uniHtml}${poiSummary}${linkHtml}</div>`;
 
   const marker = markersProp.get(id) ?? new mapboxgl.Marker({ element: el, anchor:'bottom' });
-
-  const popup = new mapboxgl.Popup({ offset:8, maxWidth:'340px' }).setHTML(html);
-  popup.on('open', () => {
-      if (popup.getElement()) popup.getElement().style.zIndex = '99999';
-  });
-
-  marker
-    .setLngLat([p.lon, p.lat])
-    .setPopup(popup)
-    .addTo(map);
-
+  marker.setLngLat([p.lon, p.lat]).setPopup(new mapboxgl.Popup({ offset:8, maxWidth:'340px' }).setHTML(html)).addTo(map);
   markersProp.set(id, marker);
 
+  // Interaction: Simple hover (NO group owner enlargement)
   const hoverLabel = p.property || 'Property';
-
   el.addEventListener('mouseenter', (e)=> {
     showTip(hoverLabel, e.clientX, e.clientY);
-    if (hoverTimer) clearTimeout(hoverTimer);
-
-    const u = p._nearestUni;
-    if (u && u.buildingLat && u.buildingLon) {
-        const lineData = { type: 'Feature', geometry: { type: 'LineString', coordinates: [[p.lon, p.lat], [u.buildingLon, u.buildingLat]] } };
-        if (map.getSource('hover-line-src')) {
-            map.getSource('hover-line-src').setData(lineData);
-        } else {
-            map.addSource('hover-line-src', { type: 'geojson', data: lineData });
-            map.addLayer({
-                id: 'hover-line', type: 'line', source: 'hover-line-src',
-                paint: { 'line-color': '#2563eb', 'line-width': 3, 'line-dasharray': [2, 1] }
-            });
-        }
+    const inner = el.querySelector('.prop-inner');
+    if (inner) {
+        inner.style.transform = 'scale(1.5)';
+        inner.style.filter = 'none';
+        inner.style.opacity = '1.0';
+        el.style.zIndex = '200';
     }
-
-    const hoveredOwner = p.owner;
-    if (hoveredOwner) {
-        baseProps.forEach(otherProp => {
-            if (otherProp.owner === hoveredOwner) {
-                const m = markersProp.get(String(otherProp.propID));
-                if (m) {
-                    const inner = m.getElement().querySelector('.prop-inner');
-                    if (inner) {
-                        if (otherProp.propID === p.propID) {
-                            inner.style.transform = 'scale(1.4)';  
-                            inner.style.opacity = '1.0';           
-                            inner.style.filter = 'none';           
-                            inner.style.boxShadow = '0 4px 12px rgba(88, 28, 135, 0.4)'; 
-                            m.getElement().style.zIndex = '110';   
-                        } else {
-                            const isGhostLocal = otherProp._isHighlighted === false;
-                            inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)'; 
-                            inner.style.opacity = '1.0';           
-                            inner.style.filter = 'none';           
-                            inner.style.boxShadow = '0 4px 12px rgba(88, 28, 135, 0.2)'; 
-                            m.getElement().style.zIndex = '105';   
-                        }
-                    }
-                }
-            }
-        });
-    }
-
     hoverTimer = setTimeout(() => { toggleCardHot(id, true); }, 350);
   });
 
@@ -1379,28 +1299,12 @@ function drawProperty(p){
     if (hoverTimer) clearTimeout(hoverTimer);
     toggleCardHot(id, false);
     hideTip();
-
-    if (map.getLayer('hover-line')) map.removeLayer('hover-line');
-    if (map.getSource('hover-line-src')) map.removeSource('hover-line-src');
-
-    const hoveredOwner = p.owner;
-    if (hoveredOwner) {
-        baseProps.forEach(otherProp => {
-            if (otherProp.owner === hoveredOwner) {
-                const m = markersProp.get(String(otherProp.propID));
-                if (m) {
-                    const inner = m.getElement().querySelector('.prop-inner');
-                    if (inner) {
-                        const isGhostLocal = otherProp._isHighlighted === false;
-                        inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)';
-                        inner.style.opacity = '1.0'; // Stays solid
-                        inner.style.filter = isGhostLocal ? 'grayscale(100%)' : 'none';
-                        inner.style.boxShadow = '0 3px 6px rgba(0,0,0,0.3)';
-                        m.getElement().style.zIndex = isGhostLocal ? '50' : '100'; // Ghost drops to 50
-                    }
-                }
-            }
-        });
+    const inner = el.querySelector('.prop-inner');
+    if (inner) {
+        inner.style.transform = defaultScale;
+        inner.style.filter = defaultFilter;
+        inner.style.opacity = defaultOpacity;
+        el.style.zIndex = isGhost ? '50' : '100';
     }
   });
 }
@@ -1878,20 +1782,38 @@ async function handlePropsMessage(msg, channelName){
 
   console.log(`Updated ${updatedProps.length} properties. Found ${activeSet.size} matches.`);
 
-  // D. Update state and render
+  // D. Highlights Summary
+  const highlightedProps = updatedProps.filter(p => p._isHighlighted);
+  window.activeUniId = null; // Protection disabled
+
+  // E. Update state and render visuals
   baseProps = updatedProps;
   
-  // Clear map to redraw markers with correct opacity
-  clearAllMarkers();
+  for (const m of markersProp.values()) m.remove();
+  markersProp.clear();
+
+  applyFilters();      
+  drawCampusMarkers(); 
   
-  // Re-apply filters (this handles the rendering)
-  applyFilters();
-  drawCampusMarkers();
-  
-  // If we have matches, fly to the first one
-  const firstMatch = updatedProps.find(p => p._isHighlighted);
-  if (firstMatch) {
-      map.flyTo({ center:[firstMatch.lon, firstMatch.lat], zoom:13, duration:1000 });
+  // 1. Contextual Frame: Zoom to fit all results
+  if (highlightedProps.length > 0) {
+      const bounds = new mapboxgl.LngLatBounds();
+      highlightedProps.forEach(p => {
+          bounds.extend([p.lon, p.lat]);
+      });
+
+      // C. Apply the move with responsive padding
+      map.fitBounds(bounds, {
+          padding: { 
+              top: 80, 
+              bottom: 80, 
+              left: 50, 
+              // Keep right padding high (450) so properties aren't hidden under the list panel
+              right: window.innerWidth > 1024 ? 450 : 50 
+          },
+          duration: 2000,
+          maxZoom: 15 // Sufficiently close to see building footprints but keep context
+      });
   }
 }
 
