@@ -122,32 +122,28 @@ const CampusManager = {
 
           el.addEventListener('mouseenter', (e) => {
               showTip(uniKey, e.clientX, e.clientY); 
-              CampusManager.markers.forEach(item => {
-                  if (item.key === safeKey) {
-                      const inner = item.el.querySelector('.uni-logo-inner');
-                      if (inner) {
-                          inner.style.transform = 'scale(1.15)'; 
-                          inner.style.opacity = '1.0';           
-                      }
-                      item.el.style.zIndex = '40'; 
-                  }
-              });
+              const inner = el.querySelector('.uni-logo-inner');
+              if (inner) {
+                  // Individual expansion + remove black and white filter
+                  inner.style.transform = 'scale(1.25)'; 
+                  inner.style.filter = 'none';
+                  inner.style.opacity = '1.0';            
+              }
+              el.style.zIndex = '1000'; 
           });
           
           el.addEventListener('mousemove', (e) => showTip(uniKey, e.clientX, e.clientY));
           
           el.addEventListener('mouseleave', () => {
               hideTip(); 
-              CampusManager.markers.forEach(item => {
-                  if (item.key === safeKey) {
-                      const inner = item.el.querySelector('.uni-logo-inner');
-                      if (inner) {
-                          inner.style.transform = 'scale(0.7)'; 
-                          inner.style.opacity = '0.9';
-                      }
-                      item.el.style.zIndex = '30';
-                  }
-              });
+              const inner = el.querySelector('.uni-logo-inner');
+              if (inner) {
+                  // Revert strictly to the dynamic mode variables defined above
+                  inner.style.transform = uniScale; 
+                  inner.style.filter = uniFilter;
+                  inner.style.opacity = uniOpacity;
+              }
+              el.style.zIndex = zIndexValue;
           });
           
           el.addEventListener('click', (e) => {
@@ -1500,41 +1496,30 @@ function toggleMarkerHot(id, on){
   const p = baseProps.find(prop => String(prop.propID) === String(id));
   if (!p) return;
 
-  const owner = p.owner;
-  if (owner) {
-      baseProps.forEach(otherProp => {
-          if (otherProp.owner === owner) {
-              const m2 = markersProp.get(String(otherProp.propID));
-              if (m2) {
-                  const inner = m2.getElement().querySelector('.prop-inner');
-                  if (inner) {
-                      if (on) {
-                          if (otherProp.propID === p.propID) {
-                              inner.style.transform = 'scale(1.4)';
-                              inner.style.opacity = '1.0';
-                              inner.style.filter = 'none';
-                              inner.style.boxShadow = '0 4px 12px rgba(88, 28, 135, 0.4)';
-                              m2.getElement().style.zIndex = '110';
-                          } else {
-                              const isGhostLocal = otherProp._isHighlighted === false;
-                              inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)';
-                              inner.style.opacity = '1.0';
-                              inner.style.filter = 'none';
-                              inner.style.boxShadow = '0 4px 12px rgba(88, 28, 135, 0.2)';
-                              m2.getElement().style.zIndex = '105';
-                          }
-                      } else {
-                          const isGhostLocal = otherProp._isHighlighted === false;
-                          inner.style.transform = isGhostLocal ? 'scale(0.85)' : 'scale(1.1)';
-                          inner.style.opacity = '1.0'; // Stays solid
-                          inner.style.filter = isGhostLocal ? 'grayscale(100%)' : 'none';
-                          inner.style.boxShadow = '0 3px 6px rgba(0,0,0,0.3)';
-                          m2.getElement().style.zIndex = isGhostLocal ? '50' : '100'; // Ghost drops to 50
-                      }
-                  }
-              }
-          }
-      });
+  const inner = m.getElement().querySelector('.prop-inner');
+  if (!inner) return;
+
+  if (on) {
+      // Individual interaction triggered by the list
+      inner.style.transform = 'scale(1.6)';
+      inner.style.opacity = '1.0';
+      inner.style.filter = 'none';
+      inner.style.boxShadow = '0 6px 12px rgba(139, 92, 246, 0.4)';
+      m.getElement().style.zIndex = '2000';
+  } else {
+      // Strictly revert to Browse vs Search Mode variables
+      const hasActiveSearch = baseProps.some(prop => prop._isHighlighted === true);
+      const isGhost = p._isHighlighted === false;
+
+      const revertScale   = !hasActiveSearch ? 'scale(1.1)' : (isGhost ? 'scale(0.3)' : 'scale(1.4)');
+      const revertOpacity = !hasActiveSearch ? '1.0' : (isGhost ? '0.4' : '1.0');
+      const revertFilter  = !hasActiveSearch ? 'none' : (isGhost ? 'grayscale(100%)' : 'none');
+
+      inner.style.transform = revertScale;
+      inner.style.opacity = revertOpacity;
+      inner.style.filter = revertFilter;
+      inner.style.boxShadow = '0 3px 6px rgba(0,0,0,0.3)';
+      m.getElement().style.zIndex = isGhost ? '50' : '100';
   }
 }
 
